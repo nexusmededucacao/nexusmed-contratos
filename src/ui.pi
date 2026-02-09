@@ -1,0 +1,270 @@
+import streamlit as st
+import hashlib
+from datetime import datetime
+import pytz
+from src.repository import (
+    get_cursos, get_turmas_by_curso, get_turma_by_id, 
+    upsert_aluno, create_contrato, get_contrato_by_token, registrar_aceite
+)
+from src.services import gerar_contrato_pdf, enviar_email_contrato
+from dateutil.relativedelta import relativedelta
+
+# --- TELA 1: ADMIN (GERAÇÃO) ---
+
+def tela_admin_geracao():
+    st.title("🎓 Sistema de Gestão Acadêmica")
+    st.subheader("Novo Contrato de Matrícula")
+
+    # 1. Seleção de Curso e Turma
+    cursos = get_cursos()
+    opcoes_cursos = {c['nome']: c['id'] for c in cursos}
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        nome_curso = st.selectbox("Selecione o Curso", list(opcoes_cursos.keys()) if opcoes_cursos else [])
+    
+    turmas = []
+    if nome_curso:
+        curso_id = opcoes_cursos[nome_curso]
+        dados_curso_selecionado = next(c for c in cursos if c['id'] == curso_id)
+        turmas = get_turmas_by_curso(curso_id)
+    
+    opcoes_turmas = {t['codigo_turma']: t for t in turmas}
+    with col2:
+        codigo_turma = st.selectbox("Selecione a Turma", list(opcoes_turmas.keys()) if turmas else [])
+
+    st.markdown("---")
+
+    # 2. Dados do Aluno
+    st.info("Dados do Aluno")
+    with st.form("form_aluno"):
+        c1, c2, c3 = st.columns(3)
+        nome = c1.text_input("Nome Completo")
+        cpf = c2.text_input("CPF (somente números)")
+        rg = c3.text_input("RG")
+        
+        c4, c5, c6 = st.columns(3)
+        email = c4.text_input("E-mail")
+        telefone = c5.text_input("Celular")
+        data_nasc = c6.date_input("Data de Nascimento", value=None, min_value=datetime(1900, 1, 1))
+
+        c7, c8 = st.columns(2)
+        nacionalidade = c7.text_input("Nacionalidade", value="Brasileira")
+        estado_civil = c8.selectbox("Estado Civil", ["Solteiro(a)", "Casado(a)", "Divorciado(a)", "Viúvo(a)"])
+
+        st.markdown("**Endereço**")
+        e1, e2, e3 = st.columns([3, 1, 1])
+        logradouro = e1.text_input("Logradouro")
+        numero = e2.text_input("Número")
+        compl = e3.text_input("Complemento")
+        
+        e4, e5, e6 = st.columns(3)
+        bairro = e4.text_input("Bairro")
+        cidade = e5.text_input("Cidade")
+        uf = e6.text_input("UF", max_chars=2)
+        cep = st.text_input("CEP")
+
+        st.markdown("**Dados Profissionais**")
+        p1, p2 = st.columns(2)
+        crm = p1.text_input("CRM")
+        area = p2.text_input("Área de Formação")
+
+        # 3. Financeiro
+        st.markdown("---")
+        st.info("Configuração Financeira do Contrato")
+        
+        # Recupera valor bruto do curso selecionado
+        valor_bruto = float(dados_curso_selecionado['valor_bruto']) if nome_curso else 0.0
+        
+        f1, f2, f3 = st.columns(3)
+        f1.metric("Valor Base do Curso", f"R$ {valor_bruto:,.2f}")
+        percentual_desc = f2.number_input("% Desconto", 0.0, 100.0, 0.0)
+        
+        # Cálculo dinâmico simples para exibição
+        valor_desconto = valor_bruto * (percentual_desc / 100)
+        valor_final = valor_bruto - valor_desconto
+        f3.metric("Valor Final (Saldo)", f"R$ {valor_final:,.2f}")
+
+        st.markdown("**Entrada**")
+        ent1, ent2, ent3, ent4 = st.columns(4)
+        entrada_valor = ent1.number_input("Valor da Entrada R$", 0.0, valor_final, 0.0)
+        entrada_qtd = ent2.number_input("Qtd Parcelas Entrada", 1, 3, 1)
+        entrada_venc = ent3.date_input("Vencimento 1ª Entrada", min_value=datetime.today())
+        entrada_forma = ent4.selectbox("Forma Pagto Entrada", ["Boleto", "PIX", "Cartão de Crédito"])
+
+        st.markdown("**Saldo Restante**")
+        saldo_restante = valor_final - entrada_valor
+        st.caption(f"Saldo a parcelar: R$ {saldo_restante:,.2f}")
+        
+        sal1, sal2, sal3, sal4 = st.columns(4)
+        saldo_qtd = sal1.number_input("Qtd Parcelas Saldo", 1, 60, 12)
+        # Checkbox ou input para 1ª data do saldo
+        saldo_venc = sal2.date_input("Vencimento 1ª Saldo", value=datetime.today() + relativedelta(months=1))
+        saldo_forma = sal3.selectbox("Forma Pagto Saldo", ["Boleto", "PIX", "Cartão de Crédito"])
+        
+        # Outros
+        o1, o2 = st.columns(2)
+        bolsista = o1.checkbox("É Bolsista?")
+        atendimento = o2.checkbox("Atendimento a Paciente (Prática)?")
+
+        submitted = st.form_submit_button("💾 Gerar Contrato e Enviar E-mail")
+
+    if submitted:
+        if not cpf or not email or not nome_curso:
+            st.error("Preencha os campos obrigatórios (CPF, Email, Curso).")
+            return
+
+        with st.spinner("Processando..."):
+            # 1. Salvar/Atualizar Aluno
+            dados_aluno = {
+                "nome_completo": nome, "cpf": cpf, "rg": rg, "email": email,
+                "telefone": telefone, "data_nascimento": str(data_nasc) if data_nasc else None,
+                "nacionalidade": nacionalidade, "estado_civil": estado_civil,
+                "logradouro": logradouro, "numero": numero, "complemento": compl,
+                "bairro": bairro, "cidade": cidade, "uf": uf, "cep": cep,
+                "crm": crm, "area_formacao": area
+            }
+            aluno_salvo = upsert_aluno(dados_aluno)
+            
+            if not aluno_salvo:
+                return
+
+            # 2. Gerar PDF e Upload
+            turma_obj = opcoes_turmas[codigo_turma]
+            
+            # Estrutura de dados para o contrato
+            dados_contrato_db = {
+                "aluno_id": aluno_salvo['id'],
+                "turma_id": turma_obj['id'],
+                "valor_curso": valor_bruto,
+                "percentual_desconto": percentual_desc,
+                "valor_desconto": valor_desconto,
+                "valor_final": valor_final,
+                "valor_material": valor_bruto * 0.3,
+                "entrada_valor": entrada_valor,
+                "entrada_qtd_parcelas": entrada_qtd,
+                "entrada_forma_pagamento": entrada_forma,
+                "saldo_valor": saldo_restante,
+                "saldo_qtd_parcelas": saldo_qtd,
+                "saldo_forma_pagamento": saldo_forma,
+                "bolsista": bolsista,
+                "atendimento_paciente": atendimento,
+                "formato_curso": turma_obj['formato']
+            }
+
+            datas_vencimento = {
+                "entrada": entrada_venc,
+                "saldo": saldo_venc
+            }
+
+            # Chama o serviço de geração (PDF + Storage)
+            resultado_pdf = gerar_contrato_pdf(aluno_salvo, turma_obj, dados_curso_selecionado, dados_contrato_db, datas_vencimento)
+            
+            if resultado_pdf:
+                # 3. Salvar Contrato no Banco com o Link do PDF
+                dados_contrato_db["caminho_arquivo"] = resultado_pdf["caminho_storage"]
+                contrato_criado = create_contrato(dados_contrato_db)
+                
+                if contrato_criado:
+                    # 4. Enviar E-mail
+                    # Montar Link Absoluto (Isso depende da URL do seu app no Streamlit Cloud)
+                    # Por enquanto usamos localhost ou detectamos via st (experimental)
+                    base_url = "https://SEU-APP-URL.streamlit.app" # ALTERAR DEPOIS DO DEPLOY
+                    link_aceite = f"{base_url}/?token={contrato_criado['token_acesso']}"
+                    
+                    enviou = enviar_email_contrato(email, nome, link_aceite)
+                    
+                    if enviou:
+                        st.success("✅ Contrato gerado e enviado com sucesso!")
+                        st.balloons()
+                    else:
+                        st.warning("Contrato gerado, mas falha no envio do e-mail.")
+                else:
+                    st.error("Falha ao salvar contrato no banco.")
+
+# --- TELA 2: ALUNO (ACEITE) ---
+
+def tela_aluno_aceite(token):
+    st.set_page_config(page_title="Aceite de Contrato", layout="centered")
+    
+    contrato_data = get_contrato_by_token(token)
+    
+    if not contrato_data:
+        st.error("Link inválido ou expirado.")
+        return
+
+    contrato = contrato_data
+    aluno = contrato_data['alunos']
+    
+    if contrato['status'] == 'assinado':
+        st.success("Este contrato já foi assinado em: " + str(contrato.get('data_aceite')))
+        return
+
+    st.title("Documento Pendente de Assinatura")
+    st.markdown(f"Olá, **{aluno['nome_completo']}**.")
+    st.markdown("Por favor, revise o contrato abaixo e confirme seus dados para realizar o aceite digital.")
+
+    # Exibir PDF (Via Iframe ou Link de Download)
+    # Precisamos pegar a URL assinada novamente pois a do banco pode expirar se for antiga
+    # Mas no fluxo imediato, vamos gerar uma nova URL assinada para visualização
+    # (Simplificação: aqui assumimos que temos acesso para gerar URL de leitura)
+    
+    # st.markdown(f"[📄 Clique aqui para baixar/visualizar o contrato em PDF]({url_pdf})")
+    st.info("⚠️ Leia o contrato enviado em anexo no seu e-mail ou solicite a visualização.")
+
+    st.divider()
+    st.subheader("Aceite Digital")
+
+    with st.form("form_aceite"):
+        cpf_confirm = st.text_input("Confirme seu CPF (somente números) para assinar:")
+        li_termos = st.checkbox("Declaro que li e concordo com todos os termos do contrato.")
+        
+        btn_assinar = st.form_submit_button("ASSINAR CONTRATO DIGITALMENTE")
+    
+    if btn_assinar:
+        cpf_limpo_input = ''.join(filter(str.isdigit, cpf_confirm))
+        cpf_real = aluno['cpf'] # Já está limpo no banco
+
+        if cpf_limpo_input != cpf_real:
+            st.error("CPF incorreto. O CPF digitado não corresponde ao cadastro deste contrato.")
+        elif not li_termos:
+            st.warning("Você precisa marcar a caixa 'Declaro que li e concordo'.")
+        else:
+            # Lógica de Assinatura
+            fuso_br = pytz.timezone('America/Sao_Paulo')
+            agora = datetime.now(fuso_br)
+            
+            # Pegar IP (Streamlit Headers)
+            try:
+                # Tenta pegar cabeçalhos específicos de proxy
+                headers = st.context.headers
+                ip = headers.get("X-Forwarded-For", "0.0.0.0")
+            except:
+                ip = "0.0.0.0"
+
+            # Gerar Hash
+            raw_string = f"{contrato['id']}{agora}{cpf_real}{token}"
+            hash_ass = hashlib.sha256(raw_string.encode('utf-8')).hexdigest()
+
+            recibo_texto = f"""ACEITE/ASSINATURA DE CONTRATO DIGITAL REALIZADO
+            Data/Hora: {agora.strftime('%d/%m/%Y às %H:%M:%S')} (GMT-3)
+            Nome: {aluno['nome_completo']}
+            CPF: {cpf_real}
+            E-mail: {aluno['email']}
+            IP: {ip}
+            Link: (Token Verificado)
+            Hash: {hash_ass}"""
+
+            dados_update = {
+                "status": "assinado",
+                "data_aceite": agora.isoformat(),
+                "ip_aceite": ip,
+                "hash_aceite": hash_ass,
+                "recibo_aceite_texto": recibo_texto
+            }
+
+            registrar_aceite(contrato['id'], dados_update)
+            
+            st.success("Contrato assinado com sucesso!")
+            st.code(recibo_texto, language="text")
+            st.balloons()
