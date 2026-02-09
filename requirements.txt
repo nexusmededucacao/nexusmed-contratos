@@ -1,1 +1,7 @@
-
+streamlit
+supabase
+docxtpl
+python-dateutil
+pandas
+# O Jinja2 já vem com o docxtpl, mas garantimos a versão
+Jinja2
