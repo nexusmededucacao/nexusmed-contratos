@@ -1,8 +1,10 @@
 import streamlit as st
 import pandas as pd
 import hashlib
+import time
 import pytz
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+from dateutil.relativedelta import relativedelta 
 from src.auth import login_usuario
 from src.repository import (
     get_cursos, create_curso, 
@@ -12,10 +14,40 @@ from src.repository import (
 )
 from src.services import gerar_contrato_pdf, enviar_email, aplicar_carimbo_digital
 
+# --- LÓGICA DE CÁLCULO (VERSÃO 6.0 - RESTAURADA) ---
+
+def resetar_parcelas():
+    """
+    Chamado quando muda o Valor Total ou a Quantidade.
+    Reseta todas as parcelas para valores iguais no Session State.
+    """
+    total = st.session_state.get('ent_total_input', 0.0)
+    qtd = int(st.session_state.get('ent_qtd_input', 1))
+    
+    if qtd > 0:
+        val_igual = total / qtd
+        for i in range(qtd):
+            st.session_state[f'ent_val_{i}'] = val_igual
+
+def calcular_cascata():
+    """
+    Chamado APENAS quando muda a 1ª Parcela.
+    Mantém a 1ª parcela fixa e distribui o restante nas outras.
+    """
+    total = st.session_state.get('ent_total_input', 0.0)
+    qtd = int(st.session_state.get('ent_qtd_input', 1))
+    p1 = st.session_state.get('ent_val_0', 0.0)
+    
+    if qtd > 1:
+        restante = total - p1
+        val_resto = restante / (qtd - 1)
+        for i in range(1, qtd):
+            st.session_state[f'ent_val_{i}'] = val_resto
+
 # --- COMPONENTES AUXILIARES ---
 
 def render_login():
-    st.markdown("<h1 style='text-align: center;'>🔒 NexusMed Portal</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>🚀 VERSÃO 7.0 (Restaurada + Fix)</h1>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1,1,1])
     with col2:
         with st.form("login_form"):
@@ -34,7 +66,7 @@ def render_login():
 def render_sidebar():
     if 'usuario' not in st.session_state or not st.session_state['usuario']:
         return None
-        
+
     user = st.session_state['usuario']
     st.sidebar.title(f"Olá, {user['nome'].split()[0]}")
     st.sidebar.caption(f"Perfil: {user['perfil'].upper()}")
@@ -116,10 +148,11 @@ def tela_gestao_alunos():
     st.header("📇 Cadastro Completo de Alunos")
     cpf_busca = st.text_input("🔍 Buscar por CPF (Digite apenas números)", max_chars=14)
     
-    # CORREÇÃO: Adicionamos key="btn_buscar_unico" para evitar duplicidade de ID
+    # CORREÇÃO DO ERRO DE DUPLICIDADE: Adicionei key="btn_buscar_unico"
     if st.button("Buscar Aluno", key="btn_buscar_unico"):
-         encontrado = get_aluno_by_cpf(cpf_busca)
-         st.session_state['dados_aluno_atual'] = encontrado if encontrado else {}
+         with st.spinner("Buscando..."):
+             encontrado = get_aluno_by_cpf(cpf_busca)
+             st.session_state['dados_aluno_atual'] = encontrado if encontrado else {}
 
     if 'dados_aluno_atual' in st.session_state:
         dados = st.session_state['dados_aluno_atual']
@@ -175,171 +208,346 @@ def tela_gestao_alunos():
             crm = p1.text_input("CRM Primário", value=dados.get('crm', ''))
             area = p2.text_input("Área de Formação", value=dados.get('area_formacao', ''))
 
-            if st.form_submit_button("💾 Salvar Cadastro do Aluno"):
-                payload = {
-                    "nome_completo": nome, "cpf": cpf, "rg": rg, "email": email,
-                    "telefone": telefone, "data_nascimento": str(data_nasc),
-                    "nacionalidade": nacionalidade, "estado_civil": estado_civil,
-                    "logradouro": logradouro, "numero": numero, "complemento": complemento,
-                    "bairro": bairro, "cidade": cidade, "uf": uf, "cep": cep,
-                    "crm": crm, "area_formacao": area
-                }
-                upsert_aluno(payload)
-                st.success("Dados salvos!")
-                del st.session_state['dados_aluno_atual']
-                st.rerun()
+            submitted = st.form_submit_button("💾 Salvar Cadastro do Aluno")
 
+            if submitted:
+                if not nome or not cpf:
+                    st.error("Erro: Nome e CPF são obrigatórios.")
+                else:
+                    payload = {
+                        "nome_completo": nome, "cpf": cpf, "rg": rg, "email": email,
+                        "telefone": telefone, "data_nascimento": str(data_nasc),
+                        "nacionalidade": nacionalidade, "estado_civil": estado_civil,
+                        "logradouro": logradouro, "numero": numero, "complemento": complemento,
+                        "bairro": bairro, "cidade": cidade, "uf": uf, "cep": cep,
+                        "crm": crm, "area_formacao": area
+                    }
+                    resultado = upsert_aluno(payload)
+                    if resultado:
+                        st.toast("✅ Aluno salvo com sucesso!", icon="🎉")
+                        st.success("Dados salvos! Recarregando...")
+                        if 'dados_aluno_atual' in st.session_state:
+                            del st.session_state['dados_aluno_atual']
+                        time.sleep(1.5)
+                        st.rerun()
+                    else:
+                        st.error("❌ Erro ao salvar! Verifique se o CPF já existe ou se o banco está conectado.")
+
+# --- TELA DE CONTRATOS (RESTAURADA VERSÃO 6.0) ---
 def tela_novo_contrato():
     st.header("📝 Emissão de Contrato")
-    
+
     col_sel1, col_sel2 = st.columns(2)
-    cpf_aluno = col_sel1.text_input("Passo 1: Digite CPF do Aluno cadastrado")
+    cpf_aluno = col_sel1.text_input("Passo 1: Digite CPF do Aluno", placeholder="Apenas números")
     
     aluno = None
     if cpf_aluno:
         aluno = get_aluno_by_cpf(cpf_aluno)
         if aluno:
-            st.success(f"Aluno: **{aluno['nome_completo']}**")
+            st.success(f"🎓 Aluno: **{aluno['nome_completo']}**")
         else:
-            st.error("Aluno não encontrado.")
+            st.warning("Aluno não encontrado. Cadastre-o primeiro.")
             st.stop()
             
     cursos = get_cursos()
     nome_curso = col_sel2.selectbox("Passo 2: Selecione o Curso", [c['nome'] for c in cursos] if cursos else [])
     
-    curso_selecionado = next((c for c in cursos if c['nome'] == nome_curso), None)
-    turma_selecionada = None
+    curso_sel = next((c for c in cursos if c['nome'] == nome_curso), None)
+    turma_sel = None
     
-    if curso_selecionado:
-        turmas = get_turmas_by_curso(curso_selecionado['id'])
+    if curso_sel:
+        turmas = get_turmas_by_curso(curso_sel['id'])
         if turmas:
             cod_turma = st.selectbox("Passo 3: Selecione a Turma", [t['codigo_turma'] for t in turmas])
-            turma_selecionada = next(t for t in turmas if t['codigo_turma'] == cod_turma)
+            turma_sel = next(t for t in turmas if t['codigo_turma'] == cod_turma)
         else:
-            st.warning("Sem turmas abertas.")
+            st.error("Curso sem turmas cadastradas.")
             st.stop()
 
-    if aluno and curso_selecionado and turma_selecionada:
-        st.divider()
-        st.subheader("Configuração Financeira")
+    if not (aluno and curso_sel and turma_sel):
+        st.info("Selecione aluno, curso e turma para prosseguir.")
+        st.stop()
+
+    st.markdown("---")
+    st.subheader("💰 Configuração Financeira")
+
+    # --- VALOR E DESCONTO ---
+    valor_base = float(curso_sel['valor_bruto'])
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Valor Tabela", f"R$ {valor_base:,.2f}")
+    
+    percentual = c2.number_input("% Desconto", 0.0, 100.0, 0.0, step=0.5)
+    valor_desconto = valor_base * (percentual / 100)
+    valor_final = valor_base - valor_desconto
+    c3.metric("Valor Negociado (Final)", f"R$ {valor_final:,.2f}", delta=f"- R$ {valor_desconto:,.2f}")
+
+    st.markdown("---")
+    
+    # --- ENTRADA (LÓGICA AUTOMÁTICA DA V6) ---
+    st.write("### 1. Entrada Detalhada")
+    
+    col_e1, col_e2 = st.columns(2)
+    
+    # 1. TOTAL: Callback resetar_parcelas
+    entrada_val_total = col_e1.number_input(
+        "Valor TOTAL da Entrada (R$)", 
+        0.0, valor_final, 0.0, step=100.0, 
+        key="ent_total_input",
+        on_change=resetar_parcelas 
+    )
+    
+    # 2. QUANTIDADE: Callback resetar_parcelas
+    entrada_qtd = col_e2.number_input(
+        "Qtd Parcelas Entrada", 
+        1, 12, 1, 
+        key="ent_qtd_input",
+        on_change=resetar_parcelas
+    )
+
+    detalhes_entrada = []
+    opcoes_pagto_entrada = ["PIX", "Boleto", "Cartão de Crédito", "Dinheiro", "Cheque"]
+    valor_padrao_divisao = entrada_val_total / entrada_qtd if entrada_qtd > 0 else 0
+    
+    if entrada_qtd > 0:
+        st.write("Configuração das Parcelas da Entrada:")
+        for i in range(entrada_qtd):
+            c_p1, c_p2, c_p3 = st.columns([1.5, 1.5, 2])
+            
+            with c_p1:
+                key_val = f"ent_val_{i}"
+                
+                # Inicializa Session State
+                if key_val not in st.session_state:
+                    st.session_state[key_val] = valor_padrao_divisao
+
+                # SE FOR A 1ª PARCELA: Callback Cascata
+                if i == 0:
+                    vlr_parc = st.number_input(
+                        f"Valor {i+1}ª Parc.", 
+                        step=10.0, 
+                        key=key_val,
+                        on_change=calcular_cascata
+                    )
+                else:
+                    # OUTRAS: Lê do State
+                    vlr_parc = st.number_input(
+                        f"Valor {i+1}ª Parc.", 
+                        step=10.0, 
+                        key=key_val
+                    )
+            
+            with c_p2:
+                dt_sugestao = date.today() + relativedelta(months=+i)
+                dt_parc = st.date_input(f"Vencimento {i+1}ª", value=dt_sugestao, key=f"ent_dt_{i}")
+            
+            with c_p3:
+                forma_parc = st.selectbox(f"Forma Pagto {i+1}ª", opcoes_pagto_entrada, key=f"ent_forma_{i}")
+            
+            detalhes_entrada.append({
+                "numero": i+1,
+                "valor": vlr_parc,
+                "data": dt_parc,
+                "forma": forma_parc
+            })
+            
+        soma_parcelas = sum(d['valor'] for d in detalhes_entrada)
+        diff = abs(soma_parcelas - entrada_val_total)
+        if diff > 0.05:
+            st.warning(f"⚠️ A soma das parcelas (R$ {soma_parcelas:,.2f}) está diferente do Total (R$ {entrada_val_total:,.2f}). Diferença: R$ {diff:,.2f}")
+
+    # --- SALDO ---
+    st.markdown("---")
+    st.write("### 2. Saldo Remanescente")
+    
+    saldo_restante = valor_final - entrada_val_total
+    
+    if saldo_restante < 0:
+        st.error(f"Erro: A entrada é maior que o valor total!")
+        st.stop()
+    
+    st.info(f"💵 Saldo a Parcelar: **R$ {saldo_restante:,.2f}**")
+    
+    col_s1, col_s2, col_s3 = st.columns(3)
+    saldo_qtd = col_s1.number_input("Nº Parcelas do Saldo", 1, 60, 12)
+    primeiro_venc_saldo = col_s2.date_input("1º Vencimento Saldo", value=date.today() + relativedelta(months=+1))
+    
+    opcoes_saldo = ["Boleto", "Cartão de Crédito", "PIX", "Cheque"]
+    saldo_forma = col_s3.selectbox("Forma Pagto Saldo", opcoes_saldo)
+
+    if saldo_restante > 0:
+        valor_parcela_saldo = saldo_restante / saldo_qtd
+        lista_parcelas = []
+        for i in range(saldo_qtd):
+            venc = primeiro_venc_saldo + relativedelta(months=+i)
+            lista_parcelas.append({
+                "Parcela": f"{i+1}/{saldo_qtd}",
+                "Vencimento": venc.strftime("%d/%m/%Y"),
+                "Valor": f"R$ {valor_parcela_saldo:,.2f}",
+                "Forma": saldo_forma
+            })
         
-        with st.form("form_contrato"):
-            valor_base = float(curso_selecionado['valor_bruto'])
-            
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Valor", f"R$ {valor_base:,.2f}")
-            percentual = c2.number_input("% Desconto", 0.0, 100.0, 0.0, step=0.5)
-            
-            valor_desconto = valor_base * (percentual / 100)
-            valor_final = valor_base - valor_desconto
-            
-            c3.metric("Saldo", f"R$ {valor_final:,.2f}")
+        with st.expander("🔎 Ver Detalhes das Parcelas do Saldo", expanded=False):
+            st.dataframe(pd.DataFrame(lista_parcelas), use_container_width=True)
 
-            st.markdown("---")
-            col_ent1, col_ent2, col_ent3 = st.columns(3)
-            entrada_val = col_ent1.number_input("Valor Entrada", 0.0, valor_final, 0.0)
-            entrada_qtd = col_ent2.number_input("Qtd Parc. Entrada", 1, 3, 1)
-            entrada_dt = col_ent3.date_input("Venc. Entrada", value=date.today())
-            
-            saldo_restante = valor_final - entrada_val
-            st.caption(f"Saldo a parcelar: R$ {saldo_restante:,.2f}")
-            
-            col_sal1, col_sal2 = st.columns(2)
-            saldo_qtd = col_sal1.number_input("Qtd Parc. Saldo", 1, 60, 12)
-            saldo_dt = col_sal2.date_input("Venc. Saldo", value=date.today())
+    st.markdown("---")
+    col_check1, col_check2 = st.columns(2)
+    is_bolsista = col_check1.radio("É Bolsista?", ["Não", "Sim"], horizontal=True)
+    is_paciente = col_check2.radio("Atendimento a Paciente?", ["Não", "Sim"], horizontal=True)
 
-            st.markdown("---")
-            col_opt1, col_opt2 = st.columns(2)
-            bolsista = col_opt1.checkbox("Bolsista?")
-            atendimento = col_opt2.checkbox("Atendimento Paciente?")
-            
-            if st.form_submit_button("🚀 Gerar Contrato"):
-                with st.spinner("Processando..."):
-                    dados_contrato = {
-                        "aluno_id": aluno['id'],
-                        "turma_id": turma_selecionada['id'],
-                        "valor_curso": valor_base,
-                        "percentual_desconto": percentual,
-                        "valor_desconto": valor_desconto,
-                        "valor_final": valor_final,
-                        "valor_material": valor_base * 0.3,
-                        "entrada_valor": entrada_val,
-                        "entrada_qtd_parcelas": entrada_qtd,
-                        "entrada_forma_pagamento": "Boleto/Pix",
-                        "saldo_valor": saldo_restante,
-                        "saldo_qtd_parcelas": saldo_qtd,
-                        "saldo_forma_pagamento": "Boleto/Pix",
-                        "bolsista": bolsista,
-                        "atendimento_paciente": atendimento,
-                        "formato_curso": turma_selecionada['formato']
-                    }
+    # --- AÇÃO FINAL ---
+    st.markdown("### 🚀 Finalização")
+    
+    if 'contrato_gerado' not in st.session_state:
+        st.session_state['contrato_gerado'] = None
+
+    if st.button("💾 Gerar Contrato e Link", type="primary", use_container_width=True):
+        if saldo_restante < 0:
+            st.error("Valores inconsistentes.")
+        else:
+            with st.spinner("Criando registro e gerando PDF..."):
+                dados_contrato = {
+                    "aluno_id": aluno['id'],
+                    "turma_id": turma_sel['id'],
+                    "valor_curso": valor_base,
+                    "percentual_desconto": percentual,
+                    "valor_desconto": valor_desconto,
+                    "valor_final": valor_final,
+                    "entrada_valor": entrada_val_total,
+                    "entrada_qtd_parcelas": entrada_qtd,
+                    "saldo_valor": saldo_restante,
+                    "saldo_qtd_parcelas": saldo_qtd,
+                    "saldo_forma_pagamento": saldo_forma,
+                    "bolsista": True if is_bolsista == "Sim" else False,
+                    "atendimento_paciente": True if is_paciente == "Sim" else False,
+                    "formato_curso": turma_sel['formato']
+                }
+                
+                datas_info = {
+                    "detalhes_entrada": detalhes_entrada,
+                    "inicio_saldo": primeiro_venc_saldo.strftime("%Y-%m-%d")
+                }
+                
+                caminho_pdf = gerar_contrato_pdf(aluno, turma_sel, curso_sel, dados_contrato, datas_info)
+                
+                if caminho_pdf:
+                    dados_contrato['caminho_arquivo'] = caminho_pdf
+                    if 'entrada_detalhes' in dados_contrato: del dados_contrato['entrada_detalhes']
                     
-                    datas = {"entrada": entrada_dt, "saldo": saldo_dt}
+                    novo_contrato = create_contrato(dados_contrato)
                     
-                    caminho = gerar_contrato_pdf(aluno, turma_selecionada, curso_selecionado, dados_contrato, datas)
-                    
-                    if caminho:
-                        dados_contrato['caminho_arquivo'] = caminho
-                        contrato = create_contrato(dados_contrato)
-                        
-                        link = f"https://nexusmed-contratos.streamlit.app/?token={contrato['token_acesso']}"
-                        enviou = enviar_email(aluno['email'], aluno['nome_completo'], link)
-                        
-                        if enviou:
-                            st.success("Sucesso! E-mail enviado.")
-                            st.balloons()
-                        else:
-                            st.warning("Contrato gerado, mas falha no e-mail.")
+                    if novo_contrato:
+                        st.session_state['contrato_gerado'] = {
+                            "token": novo_contrato['token_acesso'],
+                            "email": aluno['email'],
+                            "nome": aluno['nome_completo'],
+                            "path": caminho_pdf
+                        }
+                        st.balloons()
+                        st.success("Contrato Gerado com Sucesso!")
+                        st.rerun()
+                else:
+                    st.error("Falha ao gerar PDF.")
+
+    if st.session_state['contrato_gerado']:
+        info = st.session_state['contrato_gerado']
+        link_unico = f"https://nexusmed-contratos.streamlit.app/?token={info['token']}"
+        
+        st.divider()
+        st.markdown("#### ✅ Contrato Pronto!")
+        
+        c_link, c_down, c_mail = st.columns([2, 1, 1])
+        with c_link:
+            st.text_input("🔗 Link para o Aluno:", value=link_unico, read_only=True)
+        with c_down:
+            try:
+                with open(info['path'], "rb") as pdf_file:
+                    st.download_button("📥 Baixar PDF", pdf_file, f"Contrato_{info['nome']}.pdf", "application/pdf", use_container_width=True)
+            except:
+                st.warning("PDF não localizado.")
+        with c_mail:
+            if st.button("📧 Enviar E-mail", use_container_width=True):
+                with st.spinner("Enviando..."):
+                    if enviar_email(info['email'], info['nome'], link_unico):
+                        st.toast("E-mail enviado!", icon="📩")
                     else:
-                        st.error("Erro ao gerar PDF.")
+                        st.error("Erro no envio.")
+        
+        if st.button("🔄 Iniciar Novo"):
+            st.session_state['contrato_gerado'] = None
+            st.rerun()
 
 def tela_aceite_aluno(token):
-    st.set_page_config(page_title="Assinatura", layout="centered")
-    
+    st.set_page_config(page_title="Assinatura Digital", layout="centered")
     contrato_data = get_contrato_by_token(token)
     
     if not contrato_data:
-        st.error("Link inválido.")
+        st.error("🚫 Link inválido.")
         st.stop()
         
     contrato = contrato_data
     aluno = contrato_data.get('alunos') or contrato_data.get('aluno')
     
     if not aluno:
-        st.error("Erro: Aluno não identificado.")
+        st.error("Erro nos dados do aluno.")
         st.stop()
 
     if contrato['status'] == 'assinado':
-        st.info("✅ Contrato já assinado.")
+        st.info(f"✅ Este contrato já foi assinado em {contrato.get('data_aceite')}.")
         return
 
-    st.title("Assinatura Digital")
-    st.write(f"Olá, **{aluno['nome_completo']}**.")
+    st.title("Documento Pendente de Assinatura")
+    st.markdown(f"Olá, **{aluno['nome_completo']}**.")
+    st.write("Revise os termos e assine abaixo.")
     
-    with st.form("form_aceite"):
-        st.write("Confirme seus dados:")
-        nome_input = st.text_input("Seu Nome")
-        cpf_input = st.text_input("Seu CPF")
-        check = st.checkbox("Li e concordo com o contrato.")
+    st.divider()
+    
+    with st.form("form_aceite_digital"):
+        col_a1, col_a2 = st.columns(2)
+        nome_input = col_a1.text_input("Seu Nome Completo")
+        cpf_input = col_a2.text_input("Seu CPF (apenas números)")
         
-        if st.form_submit_button("ASSINAR"):
+        check_termos = st.checkbox("Declaro que li o contrato e concordo com todas as cláusulas.")
+        
+        if st.form_submit_button("✅ ASSINAR CONTRATO"):
             cpf_real = aluno['cpf']
-            cpf_limpo = ''.join(filter(str.isdigit, cpf_input))
+            cpf_digitado = ''.join(filter(str.isdigit, cpf_input))
             
-            if cpf_limpo != cpf_real or not check:
-                st.error("Dados incorretos ou termo não marcado.")
+            if cpf_digitado != cpf_real:
+                st.error("CPF incorreto.")
+            elif nome_input.lower().strip() != aluno['nome_completo'].lower().strip():
+                st.warning("Nome incorreto.")
+            elif not check_termos:
+                st.error("Marque o aceite dos termos.")
             else:
-                fuso = pytz.timezone('America/Sao_Paulo')
-                agora = datetime.now(fuso)
-                
-                # Simulação de Carimbo
-                texto = f"ASSINADO DIGITALMENTE EM {agora}"
-                
-                # Atualiza Banco
-                registrar_aceite(contrato['id'], {
-                    "status": "assinado",
-                    "data_aceite": agora.isoformat(),
-                    "recibo_aceite_texto": texto
-                })
-                st.balloons()
-                st.success("Contrato Assinado!")
+                with st.spinner("Assinando..."):
+                    fuso = pytz.timezone('America/Sao_Paulo')
+                    agora = datetime.now(fuso)
+                    ip = "IP_CLIENTE"
+                    try: ip = st.context.headers.get("X-Forwarded-For", "0.0.0.0")
+                    except: pass
+                    
+                    raw_data = f"{contrato['id']}|{agora}|{cpf_real}"
+                    hash_ass = hashlib.sha256(raw_data.encode()).hexdigest().upper()
+                    
+                    link_validacao = f"https://nexusmed-contratos.streamlit.app/?token={token}"
+                    
+                    texto_carimbo = f"""ACEITE DIGITAL REALIZADO
+Data: {agora.strftime('%d/%m/%Y %H:%M:%S')}
+Nome: {aluno['nome_completo']}
+CPF: {cpf_real}
+Hash: {hash_ass}"""
+
+                    caminho_original = contrato['caminho_arquivo']
+                    novo_caminho = aplicar_carimbo_digital(caminho_original, texto_carimbo)
+                    
+                    if novo_caminho:
+                        registrar_aceite(contrato['id'], {
+                            "status": "assinado",
+                            "data_aceite": agora.isoformat(),
+                            "recibo_aceite_texto": texto_carimbo,
+                            "caminho_arquivo": novo_caminho
+                        })
+                        st.balloons()
+                        st.success("Assinado com sucesso!")
+                    else:
+                        st.error("Erro ao assinar.")
