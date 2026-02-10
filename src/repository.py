@@ -1,6 +1,6 @@
 import streamlit as st
 from src.db import supabase
-
+# ---CRUD COMPLETO ----
 # --- CURSOS ---
 def get_cursos():
     return supabase.table("cursos").select("*").order("nome").execute().data
