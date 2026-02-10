@@ -1,270 +1,411 @@
 import streamlit as st
+import pandas as pd
 import hashlib
-from datetime import datetime
 import pytz
+from datetime import datetime, date
+from src.auth import login_usuario
 from src.repository import (
-    get_cursos, get_turmas_by_curso, get_turma_by_id, 
-    upsert_aluno, create_contrato, get_contrato_by_token, registrar_aceite
+    get_cursos, create_curso, 
+    get_turmas_by_curso, create_turma, 
+    get_aluno_by_cpf, upsert_aluno, 
+    create_contrato, get_contrato_by_token, registrar_aceite
 )
-from src.services import gerar_contrato_pdf, enviar_email_contrato
-from dateutil.relativedelta import relativedelta
+from src.services import gerar_contrato_pdf, enviar_email, aplicar_carimbo_digital
 
-# --- TELA 1: ADMIN (GERAÇÃO) ---
+# --- COMPONENTES AUXILIARES ---
 
-def tela_admin_geracao():
-    st.title("🎓 Sistema de Gestão Acadêmica")
-    st.subheader("Novo Contrato de Matrícula")
-
-    # 1. Seleção de Curso e Turma
-    cursos = get_cursos()
-    opcoes_cursos = {c['nome']: c['id'] for c in cursos}
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        nome_curso = st.selectbox("Selecione o Curso", list(opcoes_cursos.keys()) if opcoes_cursos else [])
-    
-    turmas = []
-    if nome_curso:
-        curso_id = opcoes_cursos[nome_curso]
-        dados_curso_selecionado = next(c for c in cursos if c['id'] == curso_id)
-        turmas = get_turmas_by_curso(curso_id)
-    
-    opcoes_turmas = {t['codigo_turma']: t for t in turmas}
+def render_login():
+    st.markdown("<h1 style='text-align: center;'>🔒 NexusMed Portal</h1>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1,1,1])
     with col2:
-        codigo_turma = st.selectbox("Selecione a Turma", list(opcoes_turmas.keys()) if turmas else [])
-
-    st.markdown("---")
-
-    # 2. Dados do Aluno
-    st.info("Dados do Aluno")
-    with st.form("form_aluno"):
-        c1, c2, c3 = st.columns(3)
-        nome = c1.text_input("Nome Completo")
-        cpf = c2.text_input("CPF (somente números)")
-        rg = c3.text_input("RG")
-        
-        c4, c5, c6 = st.columns(3)
-        email = c4.text_input("E-mail")
-        telefone = c5.text_input("Celular")
-        data_nasc = c6.date_input("Data de Nascimento", value=None, min_value=datetime(1900, 1, 1))
-
-        c7, c8 = st.columns(2)
-        nacionalidade = c7.text_input("Nacionalidade", value="Brasileira")
-        estado_civil = c8.selectbox("Estado Civil", ["Solteiro(a)", "Casado(a)", "Divorciado(a)", "Viúvo(a)"])
-
-        st.markdown("**Endereço**")
-        e1, e2, e3 = st.columns([3, 1, 1])
-        logradouro = e1.text_input("Logradouro")
-        numero = e2.text_input("Número")
-        compl = e3.text_input("Complemento")
-        
-        e4, e5, e6 = st.columns(3)
-        bairro = e4.text_input("Bairro")
-        cidade = e5.text_input("Cidade")
-        uf = e6.text_input("UF", max_chars=2)
-        cep = st.text_input("CEP")
-
-        st.markdown("**Dados Profissionais**")
-        p1, p2 = st.columns(2)
-        crm = p1.text_input("CRM")
-        area = p2.text_input("Área de Formação")
-
-        # 3. Financeiro
-        st.markdown("---")
-        st.info("Configuração Financeira do Contrato")
-        
-        # Recupera valor bruto do curso selecionado
-        valor_bruto = float(dados_curso_selecionado['valor_bruto']) if nome_curso else 0.0
-        
-        f1, f2, f3 = st.columns(3)
-        f1.metric("Valor Base do Curso", f"R$ {valor_bruto:,.2f}")
-        percentual_desc = f2.number_input("% Desconto", 0.0, 100.0, 0.0)
-        
-        # Cálculo dinâmico simples para exibição
-        valor_desconto = valor_bruto * (percentual_desc / 100)
-        valor_final = valor_bruto - valor_desconto
-        f3.metric("Valor Final (Saldo)", f"R$ {valor_final:,.2f}")
-
-        st.markdown("**Entrada**")
-        ent1, ent2, ent3, ent4 = st.columns(4)
-        entrada_valor = ent1.number_input("Valor da Entrada R$", 0.0, valor_final, 0.0)
-        entrada_qtd = ent2.number_input("Qtd Parcelas Entrada", 1, 3, 1)
-        entrada_venc = ent3.date_input("Vencimento 1ª Entrada", min_value=datetime.today())
-        entrada_forma = ent4.selectbox("Forma Pagto Entrada", ["Boleto", "PIX", "Cartão de Crédito"])
-
-        st.markdown("**Saldo Restante**")
-        saldo_restante = valor_final - entrada_valor
-        st.caption(f"Saldo a parcelar: R$ {saldo_restante:,.2f}")
-        
-        sal1, sal2, sal3, sal4 = st.columns(4)
-        saldo_qtd = sal1.number_input("Qtd Parcelas Saldo", 1, 60, 12)
-        # Checkbox ou input para 1ª data do saldo
-        saldo_venc = sal2.date_input("Vencimento 1ª Saldo", value=datetime.today() + relativedelta(months=1))
-        saldo_forma = sal3.selectbox("Forma Pagto Saldo", ["Boleto", "PIX", "Cartão de Crédito"])
-        
-        # Outros
-        o1, o2 = st.columns(2)
-        bolsista = o1.checkbox("É Bolsista?")
-        atendimento = o2.checkbox("Atendimento a Paciente (Prática)?")
-
-        submitted = st.form_submit_button("💾 Gerar Contrato e Enviar E-mail")
-
-    if submitted:
-        if not cpf or not email or not nome_curso:
-            st.error("Preencha os campos obrigatórios (CPF, Email, Curso).")
-            return
-
-        with st.spinner("Processando..."):
-            # 1. Salvar/Atualizar Aluno
-            dados_aluno = {
-                "nome_completo": nome, "cpf": cpf, "rg": rg, "email": email,
-                "telefone": telefone, "data_nascimento": str(data_nasc) if data_nasc else None,
-                "nacionalidade": nacionalidade, "estado_civil": estado_civil,
-                "logradouro": logradouro, "numero": numero, "complemento": compl,
-                "bairro": bairro, "cidade": cidade, "uf": uf, "cep": cep,
-                "crm": crm, "area_formacao": area
-            }
-            aluno_salvo = upsert_aluno(dados_aluno)
+        with st.form("login_form"):
+            email = st.text_input("E-mail")
+            senha = st.text_input("Senha", type="password")
+            submitted = st.form_submit_button("Entrar", use_container_width=True)
             
-            if not aluno_salvo:
-                return
-
-            # 2. Gerar PDF e Upload
-            turma_obj = opcoes_turmas[codigo_turma]
-            
-            # Estrutura de dados para o contrato
-            dados_contrato_db = {
-                "aluno_id": aluno_salvo['id'],
-                "turma_id": turma_obj['id'],
-                "valor_curso": valor_bruto,
-                "percentual_desconto": percentual_desc,
-                "valor_desconto": valor_desconto,
-                "valor_final": valor_final,
-                "valor_material": valor_bruto * 0.3,
-                "entrada_valor": entrada_valor,
-                "entrada_qtd_parcelas": entrada_qtd,
-                "entrada_forma_pagamento": entrada_forma,
-                "saldo_valor": saldo_restante,
-                "saldo_qtd_parcelas": saldo_qtd,
-                "saldo_forma_pagamento": saldo_forma,
-                "bolsista": bolsista,
-                "atendimento_paciente": atendimento,
-                "formato_curso": turma_obj['formato']
-            }
-
-            datas_vencimento = {
-                "entrada": entrada_venc,
-                "saldo": saldo_venc
-            }
-
-            # Chama o serviço de geração (PDF + Storage)
-            resultado_pdf = gerar_contrato_pdf(aluno_salvo, turma_obj, dados_curso_selecionado, dados_contrato_db, datas_vencimento)
-            
-            if resultado_pdf:
-                # 3. Salvar Contrato no Banco com o Link do PDF
-                dados_contrato_db["caminho_arquivo"] = resultado_pdf["caminho_storage"]
-                contrato_criado = create_contrato(dados_contrato_db)
-                
-                if contrato_criado:
-                    # 4. Enviar E-mail
-                    # Montar Link Absoluto (Isso depende da URL do seu app no Streamlit Cloud)
-                    # Por enquanto usamos localhost ou detectamos via st (experimental)
-                    base_url = "https://SEU-APP-URL.streamlit.app" # ALTERAR DEPOIS DO DEPLOY
-                    link_aceite = f"{base_url}/?token={contrato_criado['token_acesso']}"
-                    
-                    enviou = enviar_email_contrato(email, nome, link_aceite)
-                    
-                    if enviou:
-                        st.success("✅ Contrato gerado e enviado com sucesso!")
-                        st.balloons()
-                    else:
-                        st.warning("Contrato gerado, mas falha no envio do e-mail.")
+            if submitted:
+                user = login_usuario(email, senha)
+                if user:
+                    st.session_state['usuario'] = user
+                    st.rerun()
                 else:
-                    st.error("Falha ao salvar contrato no banco.")
+                    st.error("Credenciais inválidas.")
 
-# --- TELA 2: ALUNO (ACEITE) ---
+def render_sidebar():
+    user = st.session_state['usuario']
+    st.sidebar.title(f"Olá, {user['nome'].split()[0]}")
+    st.sidebar.caption(f"Perfil: {user['perfil'].upper()}")
+    
+    opcoes = ["Gerar Contrato", "Gestão de Alunos"]
+    
+    # Apenas Admin vê a gestão do produto (Cursos/Turmas/Usuários)
+    if user['perfil'] == 'admin':
+        opcoes.extend(["Gestão de Cursos", "Gestão de Usuários"])
+    
+    opcoes.append("Sair")
+    
+    escolha = st.sidebar.radio("Navegação", opcoes)
+    
+    if escolha == "Sair":
+        st.session_state['usuario'] = None
+        st.rerun()
+        
+    return escolha
 
-def tela_aluno_aceite(token):
-    st.set_page_config(page_title="Aceite de Contrato", layout="centered")
+# --- TELAS DO SISTEMA ---
+
+def tela_gestao_cursos():
+    st.header("📚 Gestão de Oferta Acadêmica")
+    tab1, tab2 = st.tabs(["Cursos (Produtos)", "Turmas (Calendário)"])
+    
+    with tab1:
+        with st.form("form_curso"):
+            st.subheader("Novo Curso")
+            nome = st.text_input("Nome da Pós-Graduação (Ex: Dermatologia)")
+            duracao = st.number_input("Duração em Meses", 1, 60, 12)
+            carga = st.number_input("Carga Horária", 0, 5000, 360)
+            valor = st.number_input("Valor Bruto (R$)", 0.0, format="%.2f")
+            
+            if st.form_submit_button("Salvar Curso"):
+                create_curso({
+                    "nome": nome, 
+                    "duracao_meses": duracao, 
+                    "carga_horaria": carga,
+                    "valor_bruto": valor
+                })
+                st.success("Curso criado com sucesso!")
+                
+        st.divider()
+        st.caption("Cursos Cadastrados:")
+        st.dataframe(pd.DataFrame(get_cursos()))
+
+    with tab2:
+        cursos = get_cursos()
+        if not cursos:
+            st.warning("Cadastre um curso antes de criar turmas.")
+        else:
+            opcoes = {c['nome']: c['id'] for c in cursos}
+            nome_curso_sel = st.selectbox("Selecione o Curso Pai", list(opcoes.keys()))
+            id_curso_sel = opcoes[nome_curso_sel]
+            
+            with st.form("form_turma"):
+                st.subheader(f"Nova Turma para {nome_curso_sel}")
+                col_t1, col_t2 = st.columns(2)
+                codigo = col_t1.text_input("Código da Turma (Ex: DERMA-2026.1)")
+                formato = col_t2.selectbox("Formato", ["Digital", "Híbrido", "Presencial"])
+                
+                d1, d2 = st.columns(2)
+                ini = d1.date_input("Data Início")
+                fim = d2.date_input("Data Fim")
+                
+                if st.form_submit_button("Criar Turma"):
+                    create_turma({
+                        "curso_id": id_curso_sel,
+                        "codigo_turma": codigo,
+                        "formato": formato,
+                        "data_inicio": str(ini),
+                        "data_fim": str(fim)
+                    })
+                    st.success("Turma criada!")
+            
+            st.dataframe(pd.DataFrame(get_turmas_by_curso(id_curso_sel)))
+
+def tela_gestao_alunos():
+    st.header("📇 Cadastro Completo de Alunos")
+    
+    # Busca para evitar duplicidade
+    cpf_busca = st.text_input("🔍 Buscar por CPF (Digite apenas números)", max_chars=14)
+    
+    # Estado local para carregar dados
+    if st.button("Buscar") or 'dados_aluno_atual' in st.session_state:
+        # Se clicou buscar, vai no banco. Se já tem na sessão, mantém (para não perder o que digitou)
+        if 'dados_aluno_atual' not in st.session_state or st.button("Buscar"): 
+             encontrado = get_aluno_by_cpf(cpf_busca)
+             st.session_state['dados_aluno_atual'] = encontrado if encontrado else {}
+
+    if 'dados_aluno_atual' in st.session_state:
+        dados = st.session_state['dados_aluno_atual']
+        novo = not bool(dados)
+        
+        if novo:
+            st.info("CPF não encontrado. Preencha abaixo para cadastrar um novo aluno.")
+        else:
+            st.success(f"Aluno encontrado: {dados.get('nome_completo')}. Edite os dados abaixo se necessário.")
+
+        with st.form("form_aluno_completo"):
+            st.subheader("1. Dados Pessoais")
+            c1, c2, c3 = st.columns(3)
+            # Mapeamento exato do Template Word
+            nome = c1.text_input("Nome Completo {{ nome }}", value=dados.get('nome_completo', ''))
+            cpf = c2.text_input("CPF {{ cpf }}", value=dados.get('cpf', cpf_busca))
+            rg = c3.text_input("RG {{ rg }}", value=dados.get('rg', ''))
+            
+            c4, c5, c6 = st.columns(3)
+            email = c4.text_input("E-mail {{ email }}", value=dados.get('email', ''))
+            telefone = c5.text_input("Telefone/Celular {{ telefone }}", value=dados.get('telefone', ''))
+            
+            # Tratamento de data para o date_input
+            val_nasc = None
+            if dados.get('data_nascimento'):
+                val_nasc = datetime.strptime(str(dados['data_nascimento']), '%Y-%m-%d')
+            
+            data_nasc = c6.date_input("Data Nascimento {{ data_nascimento }}", value=val_nasc, min_value=date(1940, 1, 1))
+            
+            c7, c8 = st.columns(2)
+            nacionalidade = c7.text_input("Nacionalidade {{ nacionalidade }}", value=dados.get('nacionalidade', 'Brasileira'))
+            estado_civil = c8.selectbox("Estado Civil {{ estado_civil }}", 
+                                        ["Solteiro(a)", "Casado(a)", "Divorciado(a)", "Viúvo(a)", "União Estável"],
+                                        index=["Solteiro(a)", "Casado(a)", "Divorciado(a)", "Viúvo(a)", "União Estável"].index(dados.get('estado_civil', 'Solteiro(a)')))
+
+            st.subheader("2. Endereço Completo")
+            e1, e2 = st.columns([3, 1])
+            logradouro = e1.text_input("Logradouro (Rua/Av) {{ logradouro }}", value=dados.get('logradouro', ''))
+            numero = e2.text_input("Número {{ numero }}", value=dados.get('numero', ''))
+            
+            e3, e4 = st.columns([1, 1])
+            complemento = e3.text_input("Complemento {{ complemento }}", value=dados.get('complemento', ''))
+            bairro = e4.text_input("Bairro {{ bairro }}", value=dados.get('bairro', ''))
+            
+            e5, e6, e7 = st.columns(3)
+            cidade = e5.text_input("Cidade {{ cidade }}", value=dados.get('cidade', ''))
+            uf = e6.text_input("UF {{ uf }}", value=dados.get('uf', ''), max_chars=2)
+            cep = e7.text_input("CEP {{ cep }}", value=dados.get('cep', ''))
+
+            st.subheader("3. Dados Profissionais (Médicos)")
+            p1, p2 = st.columns(2)
+            crm = p1.text_input("CRM Primário {{ crm }}", value=dados.get('crm', ''))
+            area = p2.text_input("Área de Formação {{ área_formação }}", value=dados.get('area_formacao', ''))
+
+            if st.form_submit_button("💾 Salvar Cadastro do Aluno"):
+                payload = {
+                    "nome_completo": nome, "cpf": cpf, "rg": rg, "email": email,
+                    "telefone": telefone, "data_nascimento": str(data_nasc),
+                    "nacionalidade": nacionalidade, "estado_civil": estado_civil,
+                    "logradouro": logradouro, "numero": numero, "complemento": complemento,
+                    "bairro": bairro, "cidade": cidade, "uf": uf, "cep": cep,
+                    "crm": crm, "area_formacao": area
+                }
+                upsert_aluno(payload)
+                st.success("Dados do aluno salvos com sucesso! Agora você pode gerar o contrato.")
+                # Limpa sessão para forçar recarregamento se necessário
+                del st.session_state['dados_aluno_atual']
+
+def tela_novo_contrato():
+    st.header("📝 Emissão de Contrato")
+    
+    # ETAPA 1: SELEÇÃO
+    col_sel1, col_sel2 = st.columns(2)
+    cpf_aluno = col_sel1.text_input("Passo 1: Digite CPF do Aluno cadastrado")
+    
+    aluno = None
+    if cpf_aluno:
+        aluno = get_aluno_by_cpf(cpf_aluno)
+        if aluno:
+            st.success(f"Aluno Selecionado: **{aluno['nome_completo']}**")
+        else:
+            st.error("Aluno não encontrado. Vá em 'Gestão de Alunos' primeiro.")
+            st.stop()
+            
+    cursos = get_cursos()
+    nome_curso = col_sel2.selectbox("Passo 2: Selecione o Curso", [c['nome'] for c in cursos] if cursos else [])
+    
+    curso_selecionado = next((c for c in cursos if c['nome'] == nome_curso), None)
+    turma_selecionada = None
+    
+    if curso_selecionado:
+        turmas = get_turmas_by_curso(curso_selecionado['id'])
+        if turmas:
+            cod_turma = st.selectbox("Passo 3: Selecione a Turma", [t['codigo_turma'] for t in turmas])
+            turma_selecionada = next(t for t in turmas if t['codigo_turma'] == cod_turma)
+        else:
+            st.warning("Este curso não possui turmas abertas.")
+            st.stop()
+
+    # ETAPA 2: FINANCEIRO
+    if aluno and curso_selecionado and turma_selecionada:
+        st.divider()
+        st.subheader("Configuração Financeira")
+        
+        with st.form("form_contrato"):
+            # Valores Base
+            valor_base = float(curso_selecionado['valor_bruto'])
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Valor do Curso {{ valor_curso }}", f"R$ {valor_base:,.2f}")
+            percentual = c2.number_input("% Desconto {{ pencentual_desconto }}", 0.0, 100.0, 0.0, step=0.5)
+            
+            # Cálculos em tempo real (dentro do submit ou via session state, aqui simplificado)
+            valor_desconto = valor_base * (percentual / 100)
+            valor_final = valor_base - valor_desconto
+            
+            c3.metric("Valor Final (Saldo) {{ valor_final }}", f"R$ {valor_final:,.2f}")
+            st.caption(f"Desconto calculado: R$ {valor_desconto:,.2f}")
+
+            st.markdown("---")
+            st.write("**Entrada**")
+            col_ent1, col_ent2, col_ent3 = st.columns(3)
+            entrada_val = col_ent1.number_input("Valor da Entrada", 0.0, valor_final, 0.0)
+            entrada_qtd = col_ent2.number_input("Nº Parcelas Entrada", 1, 3, 1)
+            entrada_dt = col_ent3.date_input("Vencimento 1ª Entrada", value=date.today())
+            
+            st.write("**Saldo Restante**")
+            saldo_restante = valor_final - entrada_val
+            st.info(f"Saldo a parcelar: R$ {saldo_restante:,.2f}")
+            
+            col_sal1, col_sal2 = st.columns(2)
+            saldo_qtd = col_sal1.number_input("Nº Parcelas Saldo", 1, 60, 12)
+            saldo_dt = col_sal2.date_input("Vencimento 1ª Saldo (As demais serão +30 dias)", value=date.today())
+
+            st.markdown("---")
+            col_opt1, col_opt2 = st.columns(2)
+            bolsista = col_opt1.checkbox("É Bolsista? {{ bolsista }}")
+            atendimento = col_opt2.checkbox("Atendimento a Paciente? {{ atendimento }}")
+            
+            # Botão de Geração
+            btn_gerar = st.form_submit_button("🚀 Gerar Contrato e Enviar E-mail")
+            
+            if btn_gerar:
+                with st.spinner("Gerando PDF, salvando no banco e enviando e-mail..."):
+                    # Prepara dados para salvar no banco (Tabela Contratos)
+                    dados_contrato = {
+                        "aluno_id": aluno['id'],
+                        "turma_id": turma_selecionada['id'],
+                        "valor_curso": valor_base,
+                        "percentual_desconto": percentual,
+                        "valor_desconto": valor_desconto,
+                        "valor_final": valor_final,
+                        "valor_material": valor_base * 0.3, # Regra de Negócio Fixa
+                        "entrada_valor": entrada_val,
+                        "entrada_qtd_parcelas": entrada_qtd,
+                        "entrada_forma_pagamento": "Boleto/Pix", # Padrão ou adicionar selectbox
+                        "saldo_valor": saldo_restante,
+                        "saldo_qtd_parcelas": saldo_qtd,
+                        "saldo_forma_pagamento": "Boleto/Pix",
+                        "bolsista": bolsista,
+                        "atendimento_paciente": atendimento,
+                        "formato_curso": turma_selecionada['formato']
+                    }
+                    
+                    datas_vencimento = {
+                        "entrada": entrada_dt,
+                        "saldo": saldo_dt
+                    }
+                    
+                    # 1. Gera PDF e Sobe no Storage
+                    caminho_pdf = gerar_contrato_pdf(aluno, turma_selecionada, curso_selecionado, dados_contrato, datas_vencimento)
+                    
+                    if caminho_pdf:
+                        # 2. Salva registro no Banco
+                        dados_contrato['caminho_arquivo'] = caminho_pdf
+                        contrato_salvo = create_contrato(dados_contrato)
+                        
+                        # 3. Envia E-mail
+                        # AJUSTE SUA URL FINAL AQUI QUANDO FIZER O DEPLOY
+                        link_acesso = f"https://SEU-APP-NAME.streamlit.app/?token={contrato_salvo['token_acesso']}"
+                        enviou = enviar_email(aluno['email'], aluno['nome_completo'], link_acesso)
+                        
+                        if enviou:
+                            st.success("✅ Processo concluído! O aluno recebeu o link para assinatura.")
+                            st.balloons()
+                        else:
+                            st.warning("Contrato gerado, mas houve erro no envio do e-mail.")
+                    else:
+                        st.error("Erro na geração do PDF.")
+
+def tela_aceite_aluno(token):
+    st.set_page_config(page_title="Assinatura Digital", layout="centered")
     
     contrato_data = get_contrato_by_token(token)
     
     if not contrato_data:
-        st.error("Link inválido ou expirado.")
-        return
-
+        st.error("🚫 Link inválido ou expirado.")
+        st.stop()
+        
     contrato = contrato_data
-    aluno = contrato_data['alunos']
+    aluno = contrato_data['alunos'] # Supabase traz o join
     
     if contrato['status'] == 'assinado':
-        st.success("Este contrato já foi assinado em: " + str(contrato.get('data_aceite')))
+        st.info(f"✅ Este contrato já foi assinado em {contrato.get('data_aceite')}.")
         return
 
     st.title("Documento Pendente de Assinatura")
     st.markdown(f"Olá, **{aluno['nome_completo']}**.")
-    st.markdown("Por favor, revise o contrato abaixo e confirme seus dados para realizar o aceite digital.")
-
-    # Exibir PDF (Via Iframe ou Link de Download)
-    # Precisamos pegar a URL assinada novamente pois a do banco pode expirar se for antiga
-    # Mas no fluxo imediato, vamos gerar uma nova URL assinada para visualização
-    # (Simplificação: aqui assumimos que temos acesso para gerar URL de leitura)
+    st.write("Por favor, revise os termos do contrato enviado para o seu e-mail e confirme abaixo.")
     
-    # st.markdown(f"[📄 Clique aqui para baixar/visualizar o contrato em PDF]({url_pdf})")
-    st.info("⚠️ Leia o contrato enviado em anexo no seu e-mail ou solicite a visualização.")
+    st.info("ℹ️ O PDF do contrato foi enviado em anexo no e-mail de notificação.")
 
     st.divider()
-    st.subheader("Aceite Digital")
-
-    with st.form("form_aceite"):
-        cpf_confirm = st.text_input("Confirme seu CPF (somente números) para assinar:")
-        li_termos = st.checkbox("Declaro que li e concordo com todos os termos do contrato.")
-        
-        btn_assinar = st.form_submit_button("ASSINAR CONTRATO DIGITALMENTE")
+    st.subheader("✍️ Assinatura Digital")
     
-    if btn_assinar:
-        cpf_limpo_input = ''.join(filter(str.isdigit, cpf_confirm))
-        cpf_real = aluno['cpf'] # Já está limpo no banco
-
-        if cpf_limpo_input != cpf_real:
-            st.error("CPF incorreto. O CPF digitado não corresponde ao cadastro deste contrato.")
-        elif not li_termos:
-            st.warning("Você precisa marcar a caixa 'Declaro que li e concordo'.")
-        else:
-            # Lógica de Assinatura
-            fuso_br = pytz.timezone('America/Sao_Paulo')
-            agora = datetime.now(fuso_br)
+    with st.form("form_aceite_digital"):
+        st.write("Para validar sua assinatura, confirme seus dados cadastrais:")
+        
+        col_a1, col_a2 = st.columns(2)
+        nome_input = col_a1.text_input("Seu Nome Completo")
+        cpf_input = col_a2.text_input("Seu CPF (apenas números)")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        check_termos = st.checkbox("Declaro que li o contrato, concordo com todas as cláusulas e autorizo a assinatura digital.")
+        
+        btn_assinar = st.form_submit_button("✅ ASSINAR CONTRATO")
+        
+        if btn_assinar:
+            # Validações de Segurança
+            cpf_real = aluno['cpf']
+            cpf_digitado = ''.join(filter(str.isdigit, cpf_input))
             
-            # Pegar IP (Streamlit Headers)
-            try:
-                # Tenta pegar cabeçalhos específicos de proxy
-                headers = st.context.headers
-                ip = headers.get("X-Forwarded-For", "0.0.0.0")
-            except:
-                ip = "0.0.0.0"
+            if cpf_digitado != cpf_real:
+                st.error("CPF incorreto. A assinatura só pode ser realizada pelo titular do contrato.")
+            elif nome_input.lower().strip() != aluno['nome_completo'].lower().strip():
+                st.warning("O nome digitado não confere exatamente com o cadastro. Verifique acentos ou espaços.")
+            elif not check_termos:
+                st.error("Você precisa marcar a caixa concordando com os termos.")
+            else:
+                # PROCESSO DE ASSINATURA E CARIMBO
+                with st.spinner("Registrando assinatura na Blockchain (simulado) e aplicando carimbo..."):
+                    
+                    # 1. Dados do Carimbo
+                    fuso = pytz.timezone('America/Sao_Paulo')
+                    agora = datetime.now(fuso)
+                    ip = "IP_DO_CLIENTE" # Streamlit Cloud nem sempre passa o IP real, usamos placeholder ou headers
+                    try:
+                        ip = st.context.headers.get("X-Forwarded-For", "0.0.0.0")
+                    except:
+                        pass
+                    
+                    # Gerar Hash Único
+                    raw_data = f"{contrato['id']}|{agora}|{cpf_real}"
+                    hash_ass = hashlib.sha256(raw_data.encode()).hexdigest().upper()
+                    
+                    link_validacao = f"https://SEU-APP.streamlit.app/?token={token}"
+                    
+                    # Texto Exato solicitado
+                    texto_carimbo = f"""ACEITE DIGITAL REALIZADO
+Data/Hora: {agora.strftime('%d/%m/%Y às %H:%M:%S')} (GMT-3)
+Nome: {aluno['nome_completo']}
+CPF: {cpf_real}
+E-mail: {aluno['email']}
+IP: {ip}
+Link: {link_validacao}
+Hash: {hash_ass}"""
 
-            # Gerar Hash
-            raw_string = f"{contrato['id']}{agora}{cpf_real}{token}"
-            hash_ass = hashlib.sha256(raw_string.encode('utf-8')).hexdigest()
-
-            recibo_texto = f"""ACEITE/ASSINATURA DE CONTRATO DIGITAL REALIZADO
-            Data/Hora: {agora.strftime('%d/%m/%Y às %H:%M:%S')} (GMT-3)
-            Nome: {aluno['nome_completo']}
-            CPF: {cpf_real}
-            E-mail: {aluno['email']}
-            IP: {ip}
-            Link: (Token Verificado)
-            Hash: {hash_ass}"""
-
-            dados_update = {
-                "status": "assinado",
-                "data_aceite": agora.isoformat(),
-                "ip_aceite": ip,
-                "hash_aceite": hash_ass,
-                "recibo_aceite_texto": recibo_texto
-            }
-
-            registrar_aceite(contrato['id'], dados_update)
-            
-            st.success("Contrato assinado com sucesso!")
-            st.code(recibo_texto, language="text")
-            st.balloons()
+                    # 2. Aplicar Carimbo no PDF
+                    caminho_original = contrato['caminho_arquivo']
+                    novo_caminho = aplicar_carimbo_digital(caminho_original, texto_carimbo)
+                    
+                    if novo_caminho:
+                        # 3. Atualizar Banco de Dados
+                        registrar_aceite(contrato['id'], {
+                            "status": "assinado",
+                            "data_aceite": agora.isoformat(),
+                            "ip_aceite": ip,
+                            "hash_aceite": hash_ass,
+                            "recibo_aceite_texto": texto_carimbo,
+                            "caminho_arquivo": novo_caminho # Atualiza para o PDF assinado
+                        })
+                        
+                        st.balloons()
+                        st.success("Contrato assinado com sucesso! Uma cópia autenticada foi salva.")
+                        st.code(texto_carimbo, language="text")
+                    else:
+                        st.error("Erro técnico ao aplicar assinatura no documento.")
