@@ -14,12 +14,12 @@ from src.repository import (
 )
 from src.services import gerar_contrato_pdf, enviar_email, aplicar_carimbo_digital
 
-# --- LÓGICA DE CÁLCULO (CORRIGIDA) ---
+# --- LÓGICA DE CÁLCULO (CORRIGIDA E SEM CONFLITO) ---
 
 def resetar_parcelas():
     """
     Chamado quando muda o Valor Total ou a Quantidade.
-    Reseta todas as parcelas para valores iguais.
+    Reseta todas as parcelas para valores iguais no Session State.
     """
     total = st.session_state.get('ent_total_input', 0.0)
     qtd = int(st.session_state.get('ent_qtd_input', 1))
@@ -27,6 +27,7 @@ def resetar_parcelas():
     if qtd > 0:
         val_igual = total / qtd
         for i in range(qtd):
+            # Define direto na memória para não conflitar com o widget
             st.session_state[f'ent_val_{i}'] = val_igual
 
 def calcular_cascata():
@@ -45,14 +46,14 @@ def calcular_cascata():
         # Evita divisão por zero ou negativa
         val_resto = restante / (qtd - 1)
         
-        # Atualiza da parcela 2 em diante
+        # Atualiza da parcela 2 em diante na memória
         for i in range(1, qtd):
             st.session_state[f'ent_val_{i}'] = val_resto
 
 # --- COMPONENTES AUXILIARES ---
 
 def render_login():
-    st.markdown("<h1 style='text-align: center;'>🚀 VERSÃO 5.0 (Cálculo Fixo)</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>🚀 VERSÃO 6.0 (Correção State)</h1>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1,1,1])
     with col2:
         with st.form("login_form"):
@@ -292,7 +293,7 @@ def tela_novo_contrato():
     
     col_e1, col_e2 = st.columns(2)
     
-    # 1. TOTAL: Se mudar, reseta tudo (callback: resetar_parcelas)
+    # 1. TOTAL
     entrada_val_total = col_e1.number_input(
         "Valor TOTAL da Entrada (R$)", 
         0.0, valor_final, 0.0, step=100.0, 
@@ -300,7 +301,7 @@ def tela_novo_contrato():
         on_change=resetar_parcelas 
     )
     
-    # 2. QUANTIDADE: Se mudar, reseta tudo (callback: resetar_parcelas)
+    # 2. QUANTIDADE
     entrada_qtd = col_e2.number_input(
         "Qtd Parcelas Entrada", 
         1, 12, 1, 
@@ -320,28 +321,29 @@ def tela_novo_contrato():
             c_p1, c_p2, c_p3 = st.columns([1.5, 1.5, 2])
             
             with c_p1:
+                # Chave única para este campo
+                key_val = f"ent_val_{i}"
+                
+                # INICIALIZA O STATE SE NÃO EXISTIR
+                # Isso evita o erro de 'widget criado com valor padrão mas definido via API'
+                if key_val not in st.session_state:
+                    st.session_state[key_val] = valor_padrao_divisao
+
                 # SE FOR A 1ª PARCELA: Callback de Cascata
                 if i == 0:
-                    # Se não tiver valor no state, usa a divisão padrão
-                    if f"ent_val_{i}" not in st.session_state:
-                        st.session_state[f"ent_val_{i}"] = valor_padrao_divisao
-                        
                     vlr_parc = st.number_input(
                         f"Valor {i+1}ª Parc.", 
                         step=10.0, 
-                        key=f"ent_val_{i}",
+                        key=key_val,
                         on_change=calcular_cascata # Callback exclusivo da 1ª parcela
                     )
                 else:
-                    # PARA AS OUTRAS: Apenas lê do state (que foi calculado pelos callbacks)
-                    # Se não tiver no state (ex: acabou de aumentar qtd), usa o padrão
-                    val_atual = st.session_state.get(f"ent_val_{i}", valor_padrao_divisao)
+                    # PARA AS OUTRAS: Removemos o argumento 'value=' e deixamos o 'key=' comandar
+                    # O Streamlit vai pegar o valor direto do session_state
                     vlr_parc = st.number_input(
                         f"Valor {i+1}ª Parc.", 
-                        value=float(val_atual),
                         step=10.0, 
-                        key=f"ent_val_{i}"
-                        # Sem on_change, pois são calculadas automaticamente
+                        key=key_val
                     )
             
             with c_p2:
@@ -362,7 +364,7 @@ def tela_novo_contrato():
         soma_parcelas = sum(d['valor'] for d in detalhes_entrada)
         diff = abs(soma_parcelas - entrada_val_total)
         if diff > 0.05:
-            st.warning(f"⚠️ A soma das parcelas (R$ {soma_parcelas:,.2f}) está diferente do Total (R$ {entrada_val_total:,.2f}). Ajuste a 1ª parcela ou o Total.")
+            st.warning(f"⚠️ A soma das parcelas (R$ {soma_parcelas:,.2f}) está diferente do Total (R$ {entrada_val_total:,.2f}). Diferença: R$ {diff:,.2f}")
 
     # --- SALDO ---
     st.markdown("---")
