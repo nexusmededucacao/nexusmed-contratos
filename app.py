@@ -1,22 +1,47 @@
 import streamlit as st
 from src.auth import criar_admin_inicial
-from src.ui import *
+from src.ui import (
+    render_login, render_sidebar, 
+    tela_gestao_cursos, tela_gestao_alunos, tela_novo_contrato,
+    tela_aceite_aluno
+)
 
-st.set_page_config(layout="wide")
+# Configuração da Página deve ser a primeira instrução Streamlit
+st.set_page_config(page_title="NexusMed Acadêmico", layout="wide")
 
-# Rota Pública (Aceite)
-if "token" in st.query_params:
-    tela_aceite_aluno(st.query_params["token"])
-    st.stop()
+def main():
+    # 1. Roteamento: Verifica se é link de assinatura (Aluno)
+    # st.query_params é a nova sintaxe do Streamlit. Antes era st.experimental_get_query_params()
+    query_params = st.query_params
+    token = query_params.get("token", None)
 
-# Rota Privada (Sistema)
-criar_admin_inicial() # Garante que existe admin
+    if token:
+        # Modo ALUNO (Tela limpa, sem sidebar)
+        tela_aceite_aluno(token)
+        return
 
-if 'usuario' not in st.session_state or not st.session_state['usuario']:
-    render_login()
-else:
-    opcao = render_sidebar()
-    if opcao == "Gerar Contrato": tela_novo_contrato()
-    elif opcao == "Gestão de Alunos": tela_gestao_alunos()
-    elif opcao == "Gestão de Cursos": tela_gestao_cursos()
-    # Adicionar Gestão Usuários aqui
+    # 2. Modo SISTEMA INTERNO (Admin/Consultor)
+    
+    # Garante que existe pelo menos o usuário Admin no banco (primeiro deploy)
+    criar_admin_inicial()
+
+    # Verifica Sessão
+    if 'usuario' not in st.session_state or st.session_state['usuario'] is None:
+        render_login()
+        return
+
+    # Se logado, renderiza menu lateral e conteúdo
+    escolha = render_sidebar()
+    
+    if escolha == "Gerar Contrato":
+        tela_novo_contrato()
+    elif escolha == "Gestão de Alunos":
+        tela_gestao_alunos()
+    elif escolha == "Gestão de Cursos":
+        tela_gestao_cursos()
+    elif escolha == "Gestão de Usuários":
+        st.title("Gestão de Usuários")
+        st.info("Funcionalidade futura: Cadastre novos consultores aqui.")
+
+if __name__ == "__main__":
+    main()
