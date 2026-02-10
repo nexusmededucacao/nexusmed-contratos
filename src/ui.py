@@ -4,6 +4,7 @@ import hashlib
 import time
 import pytz
 from datetime import datetime, date, timedelta
+from dateutil.relativedelta import relativedelta  # Importante para somar meses corretamente
 from src.auth import login_usuario
 from src.repository import (
     get_cursos, create_curso, 
@@ -13,10 +14,30 @@ from src.repository import (
 )
 from src.services import gerar_contrato_pdf, enviar_email, aplicar_carimbo_digital
 
+# --- LÓGICA DE CÁLCULO AUTOMÁTICO DA ENTRADA ---
+def recalcular_parcelas_entrada():
+    """
+    Função chamada automaticamente quando o usuário altera o valor da 1ª parcela.
+    Ela pega o que sobrou e distribui igualmente nas outras parcelas.
+    """
+    total = st.session_state.get('ent_total_input', 0.0)
+    qtd = int(st.session_state.get('ent_qtd_input', 1))
+    p1 = st.session_state.get('ent_val_0', 0.0)
+    
+    if qtd > 1:
+        # Quanto falta pagar?
+        restante = total - p1
+        # Divide o restante pelas parcelas que faltam (qtd - 1)
+        val_media = restante / (qtd - 1)
+        
+        # Atualiza as chaves do session_state das parcelas seguintes
+        for i in range(1, qtd):
+            st.session_state[f'ent_val_{i}'] = val_media
+
 # --- COMPONENTES AUXILIARES ---
 
 def render_login():
-    st.markdown("<h1 style='text-align: center;'>🚀 VERSÃO 3.0 (Entrada Detalhada)</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>🚀 VERSÃO 4.0 (Cálculo Automático)</h1>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1,1,1])
     with col2:
         with st.form("login_form"):
@@ -201,9 +222,9 @@ def tela_gestao_alunos():
                     else:
                         st.error("❌ Erro ao salvar! Verifique se o CPF já existe ou se o banco está conectado.")
 
-# --- TELA DE CONTRATOS (ATUALIZADA) ---
+# --- TELA DE CONTRATOS ---
 def tela_novo_contrato():
-    st.header("📝 Emissão de Contrato e Check-out")
+    st.header("📝 Emissão de Contrato")
 
     col_sel1, col_sel2 = st.columns(2)
     cpf_aluno = col_sel1.text_input("Passo 1: Digite CPF do Aluno", placeholder="Apenas números")
@@ -251,19 +272,20 @@ def tela_novo_contrato():
 
     st.markdown("---")
     
-    # --- ENTRADA (NOVA LÓGICA DE LINHAS) ---
+    # --- ENTRADA (LÓGICA AUTOMÁTICA) ---
     st.write("### 1. Entrada Detalhada")
     
     # Linha 1: Valor Total e Quantidade
     col_e1, col_e2 = st.columns(2)
-    entrada_val_total = col_e1.number_input("Valor TOTAL da Entrada (R$)", 0.0, valor_final, 0.0, step=100.0)
-    entrada_qtd = col_e2.number_input("Qtd Parcelas Entrada", 1, 12, 1)
+    # KEY IMPORTANTE: 'ent_total_input' usado no callback
+    entrada_val_total = col_e1.number_input("Valor TOTAL da Entrada (R$)", 0.0, valor_final, 0.0, step=100.0, key="ent_total_input")
+    # KEY IMPORTANTE: 'ent_qtd_input' usado no callback
+    entrada_qtd = col_e2.number_input("Qtd Parcelas Entrada", 1, 12, 1, key="ent_qtd_input")
 
-    # Linhas Dinâmicas: Uma para cada parcela
     detalhes_entrada = []
     
-    # Calcula valor médio para sugestão
-    valor_sugerido = entrada_val_total / entrada_qtd if entrada_qtd > 0 else 0
+    # Valor sugerido inicial (divisão simples) caso não tenha nada no state
+    valor_divisao_simples = entrada_val_total / entrada_qtd if entrada_qtd > 0 else 0
     
     opcoes_pagto_entrada = ["PIX", "Boleto", "Cartão de Crédito", "Dinheiro", "Cheque"]
     
@@ -273,11 +295,26 @@ def tela_novo_contrato():
             c_p1, c_p2, c_p3 = st.columns([1.5, 1.5, 2])
             
             with c_p1:
-                vlr_parc = st.number_input(f"Valor {i+1}ª Parc.", value=valor_sugerido, step=10.0, key=f"ent_val_{i}")
+                # SE FOR A 1ª PARCELA: Adicionamos o callback 'on_change'
+                if i == 0:
+                    vlr_parc = st.number_input(
+                        f"Valor {i+1}ª Parc.", 
+                        value=valor_divisao_simples, 
+                        step=10.0, 
+                        key=f"ent_val_{i}",
+                        on_change=recalcular_parcelas_entrada # <--- A MÁGICA ACONTECE AQUI
+                    )
+                else:
+                    # Se for as outras, apenas lê do session_state (que foi atualizado pelo callback)
+                    # ou usa o valor da divisão simples se não tiver nada no state
+                    val_atual = st.session_state.get(f"ent_val_{i}", valor_divisao_simples)
+                    vlr_parc = st.number_input(f"Valor {i+1}ª Parc.", value=val_atual, step=10.0, key=f"ent_val_{i}")
+            
             with c_p2:
-                # Sugere datas de 30 em 30 dias a partir de hoje
-                dt_sugestao = date.today() + timedelta(days=i*30)
+                # Datas automáticas: Soma meses (i) a partir de hoje
+                dt_sugestao = date.today() + relativedelta(months=+i)
                 dt_parc = st.date_input(f"Vencimento {i+1}ª", value=dt_sugestao, key=f"ent_dt_{i}")
+            
             with c_p3:
                 forma_parc = st.selectbox(f"Forma Pagto {i+1}ª", opcoes_pagto_entrada, key=f"ent_forma_{i}")
             
@@ -290,8 +327,9 @@ def tela_novo_contrato():
             
         # Validação Visual
         soma_parcelas = sum(d['valor'] for d in detalhes_entrada)
-        if abs(soma_parcelas - entrada_val_total) > 0.01:
-            st.warning(f"⚠️ A soma das parcelas (R$ {soma_parcelas:,.2f}) está diferente do Total da Entrada (R$ {entrada_val_total:,.2f}). Ajuste os valores.")
+        diff = abs(soma_parcelas - entrada_val_total)
+        if diff > 0.05: # Margem pequena pra arredondamento
+            st.warning(f"⚠️ A soma das parcelas (R$ {soma_parcelas:,.2f}) está diferente do Total (R$ {entrada_val_total:,.2f}). Diferença: R$ {diff:,.2f}")
 
     # --- SALDO ---
     st.markdown("---")
@@ -307,9 +345,8 @@ def tela_novo_contrato():
     
     col_s1, col_s2, col_s3 = st.columns(3)
     saldo_qtd = col_s1.number_input("Nº Parcelas do Saldo", 1, 60, 12)
-    primeiro_venc_saldo = col_s2.date_input("1º Vencimento Saldo", value=date.today() + timedelta(days=30))
+    primeiro_venc_saldo = col_s2.date_input("1º Vencimento Saldo", value=date.today() + relativedelta(months=+1))
     
-    # Atualizado conforme solicitado: PIX e Cartão de Crédito (sem recorrente)
     opcoes_saldo = ["Boleto", "Cartão de Crédito", "PIX", "Cheque"]
     saldo_forma = col_s3.selectbox("Forma Pagto Saldo", opcoes_saldo)
 
@@ -318,7 +355,7 @@ def tela_novo_contrato():
         valor_parcela_saldo = saldo_restante / saldo_qtd
         lista_parcelas = []
         for i in range(saldo_qtd):
-            venc = primeiro_venc_saldo + timedelta(days=i*30)
+            venc = primeiro_venc_saldo + relativedelta(months=+i)
             lista_parcelas.append({
                 "Parcela": f"{i+1}/{saldo_qtd}",
                 "Vencimento": venc.strftime("%d/%m/%Y"),
@@ -354,7 +391,6 @@ def tela_novo_contrato():
                     "valor_final": valor_final,
                     "entrada_valor": entrada_val_total,
                     "entrada_qtd_parcelas": entrada_qtd,
-                    "entrada_detalhes": detalhes_entrada, # Passando a lista completa
                     "saldo_valor": saldo_restante,
                     "saldo_qtd_parcelas": saldo_qtd,
                     "saldo_forma_pagamento": saldo_forma,
@@ -363,9 +399,8 @@ def tela_novo_contrato():
                     "formato_curso": turma_sel['formato']
                 }
                 
-                # Contexto extra para o PDF
                 datas_info = {
-                    "detalhes_entrada": detalhes_entrada, # Passa a lista rica para o service
+                    "detalhes_entrada": detalhes_entrada,
                     "inicio_saldo": primeiro_venc_saldo.strftime("%Y-%m-%d")
                 }
                 
@@ -373,14 +408,10 @@ def tela_novo_contrato():
                 
                 if caminho_pdf:
                     dados_contrato['caminho_arquivo'] = caminho_pdf
-                    # Limpa a lista complexa antes de salvar no banco (Supabase não aceita lista de dict fácil sem JSONB)
-                    # Para simplificar, removemos a lista detalhada do insert do banco principal,
-                    # mas o PDF já foi gerado com ela.
-                    dados_contrato_banco = dados_contrato.copy()
-                    if 'entrada_detalhes' in dados_contrato_banco:
-                        del dados_contrato_banco['entrada_detalhes']
-
-                    novo_contrato = create_contrato(dados_contrato_banco)
+                    # Limpa estrutura complexa antes do banco
+                    if 'entrada_detalhes' in dados_contrato: del dados_contrato['entrada_detalhes']
+                    
+                    novo_contrato = create_contrato(dados_contrato)
                     
                     if novo_contrato:
                         st.session_state['contrato_gerado'] = {
