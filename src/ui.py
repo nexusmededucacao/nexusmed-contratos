@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import hashlib
 import pytz
+import time
 from datetime import datetime, date
 from src.auth import login_usuario
 from src.repository import (
@@ -32,6 +33,9 @@ def render_login():
                     st.error("Credenciais inválidas.")
 
 def render_sidebar():
+    if 'usuario' not in st.session_state or not st.session_state['usuario']:
+        return None
+
     user = st.session_state['usuario']
     st.sidebar.title(f"Olá, {user['nome'].split()[0]}")
     st.sidebar.caption(f"Perfil: {user['perfil'].upper()}")
@@ -113,13 +117,11 @@ def tela_gestao_alunos():
     st.header("📇 Cadastro Completo de Alunos")
     cpf_busca = st.text_input("🔍 Buscar por CPF (Digite apenas números)", max_chars=14)
     
-    # CORREÇÃO: Botão único com chave (key) para evitar duplicação
     if st.button("Buscar Aluno", key="btn_buscar_cpf"):
-         encontrado = get_aluno_by_cpf(cpf_busca)
-         # Se achar, salva. Se não achar, salva vazio {} para abrir formulário em branco
-         st.session_state['dados_aluno_atual'] = encontrado if encontrado else {}
+         with st.spinner("Buscando..."):
+             encontrado = get_aluno_by_cpf(cpf_busca)
+             st.session_state['dados_aluno_atual'] = encontrado if encontrado else {}
 
-    # Se existe 'dados_aluno_atual' na sessão, mostra o formulário
     if 'dados_aluno_atual' in st.session_state:
         dados = st.session_state['dados_aluno_atual']
         novo = not bool(dados)
@@ -142,17 +144,14 @@ def tela_gestao_alunos():
             
             val_nasc = None
             if dados.get('data_nascimento'):
-                try:
-                    val_nasc = datetime.strptime(str(dados['data_nascimento']), '%Y-%m-%d')
-                except:
-                    val_nasc = None
+                try: val_nasc = datetime.strptime(str(dados['data_nascimento']), '%Y-%m-%d')
+                except: val_nasc = None
             
             data_nasc = c6.date_input("Data Nascimento", value=val_nasc, min_value=date(1940, 1, 1))
             
             c7, c8 = st.columns(2)
             nacionalidade = c7.text_input("Nacionalidade", value=dados.get('nacionalidade', 'Brasileira'))
             
-            # Lista segura de estado civil
             lista_ec = ["Solteiro(a)", "Casado(a)", "Divorciado(a)", "Viúvo(a)", "União Estável"]
             ec_atual = dados.get('estado_civil', 'Solteiro(a)')
             idx_ec = lista_ec.index(ec_atual) if ec_atual in lista_ec else 0
@@ -177,20 +176,39 @@ def tela_gestao_alunos():
             crm = p1.text_input("CRM Primário", value=dados.get('crm', ''))
             area = p2.text_input("Área de Formação", value=dados.get('area_formacao', ''))
 
-            if st.form_submit_button("💾 Salvar Cadastro do Aluno"):
-                payload = {
-                    "nome_completo": nome, "cpf": cpf, "rg": rg, "email": email,
-                    "telefone": telefone, "data_nascimento": str(data_nasc),
-                    "nacionalidade": nacionalidade, "estado_civil": estado_civil,
-                    "logradouro": logradouro, "numero": numero, "complemento": complemento,
-                    "bairro": bairro, "cidade": cidade, "uf": uf, "cep": cep,
-                    "crm": crm, "area_formacao": area
-                }
-                upsert_aluno(payload)
-                st.success("Dados do aluno salvos com sucesso!")
-                # Limpa a sessão para forçar nova busca se quiser
-                del st.session_state['dados_aluno_atual']
-                st.rerun()
+            submitted = st.form_submit_button("💾 Salvar Cadastro do Aluno")
+
+            if submitted:
+                # 1. Validação básica de campos obrigatórios
+                if not nome or not cpf:
+                    st.error("Erro: Nome e CPF são obrigatórios.")
+                else:
+                    payload = {
+                        "nome_completo": nome, "cpf": cpf, "rg": rg, "email": email,
+                        "telefone": telefone, "data_nascimento": str(data_nasc),
+                        "nacionalidade": nacionalidade, "estado_civil": estado_civil,
+                        "logradouro": logradouro, "numero": numero, "complemento": complemento,
+                        "bairro": bairro, "cidade": cidade, "uf": uf, "cep": cep,
+                        "crm": crm, "area_formacao": area
+                    }
+                    
+                    # 2. Chama o banco e espera o retorno
+                    resultado = upsert_aluno(payload)
+                    
+                    # 3. Verifica se salvou de verdade
+                    if resultado:
+                        st.toast("✅ Aluno salvo com sucesso!", icon="🎉")
+                        st.success("Dados salvos! Recarregando...")
+                        
+                        # Remove dados da sessão para limpar o formulário
+                        if 'dados_aluno_atual' in st.session_state:
+                            del st.session_state['dados_aluno_atual']
+                        
+                        # 4. PAUSA IMPORTANTE: Espera 2 segundos para você ver a mensagem
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        st.error("❌ Erro ao salvar! Verifique se o CPF já existe ou se o banco está conectado.")
 
 def tela_novo_contrato():
     st.header("📝 Emissão de Contrato")
@@ -292,7 +310,6 @@ def tela_novo_contrato():
                         dados_contrato['caminho_arquivo'] = caminho_pdf
                         contrato_salvo = create_contrato(dados_contrato)
                         
-                        # Use URL dinâmica ou hardcoded do seu app
                         link_acesso = f"https://nexusmed-contratos.streamlit.app/?token={contrato_salvo['token_acesso']}"
                         enviou = enviar_email(aluno['email'], aluno['nome_completo'], link_acesso)
                         
@@ -314,8 +331,6 @@ def tela_aceite_aluno(token):
         st.stop()
         
     contrato = contrato_data
-    # O repository novo retorna 'alunos' (plural) no join, ou 'aluno' dependendo do nome
-    # Ajuste para garantir compatibilidade com o retorno do Supabase
     aluno = contrato_data.get('alunos') or contrato_data.get('aluno')
     
     if not aluno:
