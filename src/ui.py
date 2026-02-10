@@ -4,7 +4,7 @@ import hashlib
 import time
 import pytz
 from datetime import datetime, date, timedelta
-from dateutil.relativedelta import relativedelta  # Importante para somar meses corretamente
+from dateutil.relativedelta import relativedelta 
 from src.auth import login_usuario
 from src.repository import (
     get_cursos, create_curso, 
@@ -14,30 +14,45 @@ from src.repository import (
 )
 from src.services import gerar_contrato_pdf, enviar_email, aplicar_carimbo_digital
 
-# --- LÓGICA DE CÁLCULO AUTOMÁTICO DA ENTRADA ---
-def recalcular_parcelas_entrada():
+# --- LÓGICA DE CÁLCULO (CORRIGIDA) ---
+
+def resetar_parcelas():
     """
-    Função chamada automaticamente quando o usuário altera o valor da 1ª parcela.
-    Ela pega o que sobrou e distribui igualmente nas outras parcelas.
+    Chamado quando muda o Valor Total ou a Quantidade.
+    Reseta todas as parcelas para valores iguais.
     """
     total = st.session_state.get('ent_total_input', 0.0)
     qtd = int(st.session_state.get('ent_qtd_input', 1))
+    
+    if qtd > 0:
+        val_igual = total / qtd
+        for i in range(qtd):
+            st.session_state[f'ent_val_{i}'] = val_igual
+
+def calcular_cascata():
+    """
+    Chamado APENAS quando muda a 1ª Parcela.
+    Mantém a 1ª parcela fixa e distribui o restante nas outras.
+    """
+    total = st.session_state.get('ent_total_input', 0.0)
+    qtd = int(st.session_state.get('ent_qtd_input', 1))
+    
+    # Pega o valor que o usuário acabou de digitar na parcela 1
     p1 = st.session_state.get('ent_val_0', 0.0)
     
     if qtd > 1:
-        # Quanto falta pagar?
         restante = total - p1
-        # Divide o restante pelas parcelas que faltam (qtd - 1)
-        val_media = restante / (qtd - 1)
+        # Evita divisão por zero ou negativa
+        val_resto = restante / (qtd - 1)
         
-        # Atualiza as chaves do session_state das parcelas seguintes
+        # Atualiza da parcela 2 em diante
         for i in range(1, qtd):
-            st.session_state[f'ent_val_{i}'] = val_media
+            st.session_state[f'ent_val_{i}'] = val_resto
 
 # --- COMPONENTES AUXILIARES ---
 
 def render_login():
-    st.markdown("<h1 style='text-align: center;'>🚀 VERSÃO 4.0 (Cálculo Automático)</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>🚀 VERSÃO 5.0 (Cálculo Fixo)</h1>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1,1,1])
     with col2:
         with st.form("login_form"):
@@ -275,19 +290,29 @@ def tela_novo_contrato():
     # --- ENTRADA (LÓGICA AUTOMÁTICA) ---
     st.write("### 1. Entrada Detalhada")
     
-    # Linha 1: Valor Total e Quantidade
     col_e1, col_e2 = st.columns(2)
-    # KEY IMPORTANTE: 'ent_total_input' usado no callback
-    entrada_val_total = col_e1.number_input("Valor TOTAL da Entrada (R$)", 0.0, valor_final, 0.0, step=100.0, key="ent_total_input")
-    # KEY IMPORTANTE: 'ent_qtd_input' usado no callback
-    entrada_qtd = col_e2.number_input("Qtd Parcelas Entrada", 1, 12, 1, key="ent_qtd_input")
+    
+    # 1. TOTAL: Se mudar, reseta tudo (callback: resetar_parcelas)
+    entrada_val_total = col_e1.number_input(
+        "Valor TOTAL da Entrada (R$)", 
+        0.0, valor_final, 0.0, step=100.0, 
+        key="ent_total_input",
+        on_change=resetar_parcelas 
+    )
+    
+    # 2. QUANTIDADE: Se mudar, reseta tudo (callback: resetar_parcelas)
+    entrada_qtd = col_e2.number_input(
+        "Qtd Parcelas Entrada", 
+        1, 12, 1, 
+        key="ent_qtd_input",
+        on_change=resetar_parcelas
+    )
 
     detalhes_entrada = []
-    
-    # Valor sugerido inicial (divisão simples) caso não tenha nada no state
-    valor_divisao_simples = entrada_val_total / entrada_qtd if entrada_qtd > 0 else 0
-    
     opcoes_pagto_entrada = ["PIX", "Boleto", "Cartão de Crédito", "Dinheiro", "Cheque"]
+    
+    # Valor padrão se não houver session_state inicializado
+    valor_padrao_divisao = entrada_val_total / entrada_qtd if entrada_qtd > 0 else 0
     
     if entrada_qtd > 0:
         st.write("Configuração das Parcelas da Entrada:")
@@ -295,23 +320,31 @@ def tela_novo_contrato():
             c_p1, c_p2, c_p3 = st.columns([1.5, 1.5, 2])
             
             with c_p1:
-                # SE FOR A 1ª PARCELA: Adicionamos o callback 'on_change'
+                # SE FOR A 1ª PARCELA: Callback de Cascata
                 if i == 0:
+                    # Se não tiver valor no state, usa a divisão padrão
+                    if f"ent_val_{i}" not in st.session_state:
+                        st.session_state[f"ent_val_{i}"] = valor_padrao_divisao
+                        
                     vlr_parc = st.number_input(
                         f"Valor {i+1}ª Parc.", 
-                        value=valor_divisao_simples, 
                         step=10.0, 
                         key=f"ent_val_{i}",
-                        on_change=recalcular_parcelas_entrada # <--- A MÁGICA ACONTECE AQUI
+                        on_change=calcular_cascata # Callback exclusivo da 1ª parcela
                     )
                 else:
-                    # Se for as outras, apenas lê do session_state (que foi atualizado pelo callback)
-                    # ou usa o valor da divisão simples se não tiver nada no state
-                    val_atual = st.session_state.get(f"ent_val_{i}", valor_divisao_simples)
-                    vlr_parc = st.number_input(f"Valor {i+1}ª Parc.", value=val_atual, step=10.0, key=f"ent_val_{i}")
+                    # PARA AS OUTRAS: Apenas lê do state (que foi calculado pelos callbacks)
+                    # Se não tiver no state (ex: acabou de aumentar qtd), usa o padrão
+                    val_atual = st.session_state.get(f"ent_val_{i}", valor_padrao_divisao)
+                    vlr_parc = st.number_input(
+                        f"Valor {i+1}ª Parc.", 
+                        value=float(val_atual),
+                        step=10.0, 
+                        key=f"ent_val_{i}"
+                        # Sem on_change, pois são calculadas automaticamente
+                    )
             
             with c_p2:
-                # Datas automáticas: Soma meses (i) a partir de hoje
                 dt_sugestao = date.today() + relativedelta(months=+i)
                 dt_parc = st.date_input(f"Vencimento {i+1}ª", value=dt_sugestao, key=f"ent_dt_{i}")
             
@@ -328,8 +361,8 @@ def tela_novo_contrato():
         # Validação Visual
         soma_parcelas = sum(d['valor'] for d in detalhes_entrada)
         diff = abs(soma_parcelas - entrada_val_total)
-        if diff > 0.05: # Margem pequena pra arredondamento
-            st.warning(f"⚠️ A soma das parcelas (R$ {soma_parcelas:,.2f}) está diferente do Total (R$ {entrada_val_total:,.2f}). Diferença: R$ {diff:,.2f}")
+        if diff > 0.05:
+            st.warning(f"⚠️ A soma das parcelas (R$ {soma_parcelas:,.2f}) está diferente do Total (R$ {entrada_val_total:,.2f}). Ajuste a 1ª parcela ou o Total.")
 
     # --- SALDO ---
     st.markdown("---")
@@ -408,7 +441,6 @@ def tela_novo_contrato():
                 
                 if caminho_pdf:
                     dados_contrato['caminho_arquivo'] = caminho_pdf
-                    # Limpa estrutura complexa antes do banco
                     if 'entrada_detalhes' in dados_contrato: del dados_contrato['entrada_detalhes']
                     
                     novo_contrato = create_contrato(dados_contrato)
