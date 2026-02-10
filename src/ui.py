@@ -213,7 +213,7 @@ def tela_gestao_alunos():
 
 # --- SUBSTITUIR A FUNÇÃO tela_novo_contrato INTEIRA POR ESTA ---
 def tela_novo_contrato():
-    st.header("📝 Emissão de Contrato e Check-out")
+    st.header("🔥🔥🔥 VERSÃO NOVA ATIVADA 🔥🔥🔥")
 
     # --- SELEÇÃO DE ALUNO E CURSO ---
     col_sel1, col_sel2 = st.columns(2)
