@@ -59,6 +59,5 @@ def criar_admin_inicial():
             
     except Exception as e:
         # Ignora erro de conexão na inicialização para não travar o app
-        # O erro será tratado quando o usuário tentar logar de fato
         print(f"⚠️ Aviso (Admin Inicial): {e}")
         pass
