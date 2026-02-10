@@ -1,4 +1,4 @@
-import streamlit as st
+simport streamlit as st
 import pandas as pd
 import hashlib
 import pytz
@@ -38,7 +38,6 @@ def render_sidebar():
     
     opcoes = ["Gerar Contrato", "Gestão de Alunos"]
     
-    # Apenas Admin vê a gestão do produto (Cursos/Turmas/Usuários)
     if user['perfil'] == 'admin':
         opcoes.extend(["Gestão de Cursos", "Gestão de Usuários"])
     
@@ -112,17 +111,15 @@ def tela_gestao_cursos():
 
 def tela_gestao_alunos():
     st.header("📇 Cadastro Completo de Alunos")
-    
-    # Busca para evitar duplicidade
     cpf_busca = st.text_input("🔍 Buscar por CPF (Digite apenas números)", max_chars=14)
     
-    # Estado local para carregar dados
-    if st.button("Buscar") or 'dados_aluno_atual' in st.session_state:
-        # Se clicou buscar, vai no banco. Se já tem na sessão, mantém (para não perder o que digitou)
-        if 'dados_aluno_atual' not in st.session_state or st.button("Buscar"): 
-             encontrado = get_aluno_by_cpf(cpf_busca)
-             st.session_state['dados_aluno_atual'] = encontrado if encontrado else {}
+    # CORREÇÃO: Botão único com chave (key) para evitar duplicação
+    if st.button("Buscar Aluno", key="btn_buscar_cpf"):
+         encontrado = get_aluno_by_cpf(cpf_busca)
+         # Se achar, salva. Se não achar, salva vazio {} para abrir formulário em branco
+         st.session_state['dados_aluno_atual'] = encontrado if encontrado else {}
 
+    # Se existe 'dados_aluno_atual' na sessão, mostra o formulário
     if 'dados_aluno_atual' in st.session_state:
         dados = st.session_state['dados_aluno_atual']
         novo = not bool(dados)
@@ -135,46 +132,50 @@ def tela_gestao_alunos():
         with st.form("form_aluno_completo"):
             st.subheader("1. Dados Pessoais")
             c1, c2, c3 = st.columns(3)
-            # Mapeamento exato do Template Word
-            nome = c1.text_input("Nome Completo {{ nome }}", value=dados.get('nome_completo', ''))
-            cpf = c2.text_input("CPF {{ cpf }}", value=dados.get('cpf', cpf_busca))
-            rg = c3.text_input("RG {{ rg }}", value=dados.get('rg', ''))
+            nome = c1.text_input("Nome Completo", value=dados.get('nome_completo', ''))
+            cpf = c2.text_input("CPF", value=dados.get('cpf', cpf_busca))
+            rg = c3.text_input("RG", value=dados.get('rg', ''))
             
             c4, c5, c6 = st.columns(3)
-            email = c4.text_input("E-mail {{ email }}", value=dados.get('email', ''))
-            telefone = c5.text_input("Telefone/Celular {{ telefone }}", value=dados.get('telefone', ''))
+            email = c4.text_input("E-mail", value=dados.get('email', ''))
+            telefone = c5.text_input("Telefone/Celular", value=dados.get('telefone', ''))
             
-            # Tratamento de data para o date_input
             val_nasc = None
             if dados.get('data_nascimento'):
-                val_nasc = datetime.strptime(str(dados['data_nascimento']), '%Y-%m-%d')
+                try:
+                    val_nasc = datetime.strptime(str(dados['data_nascimento']), '%Y-%m-%d')
+                except:
+                    val_nasc = None
             
-            data_nasc = c6.date_input("Data Nascimento {{ data_nascimento }}", value=val_nasc, min_value=date(1940, 1, 1))
+            data_nasc = c6.date_input("Data Nascimento", value=val_nasc, min_value=date(1940, 1, 1))
             
             c7, c8 = st.columns(2)
-            nacionalidade = c7.text_input("Nacionalidade {{ nacionalidade }}", value=dados.get('nacionalidade', 'Brasileira'))
-            estado_civil = c8.selectbox("Estado Civil {{ estado_civil }}", 
-                                        ["Solteiro(a)", "Casado(a)", "Divorciado(a)", "Viúvo(a)", "União Estável"],
-                                        index=["Solteiro(a)", "Casado(a)", "Divorciado(a)", "Viúvo(a)", "União Estável"].index(dados.get('estado_civil', 'Solteiro(a)')))
+            nacionalidade = c7.text_input("Nacionalidade", value=dados.get('nacionalidade', 'Brasileira'))
+            
+            # Lista segura de estado civil
+            lista_ec = ["Solteiro(a)", "Casado(a)", "Divorciado(a)", "Viúvo(a)", "União Estável"]
+            ec_atual = dados.get('estado_civil', 'Solteiro(a)')
+            idx_ec = lista_ec.index(ec_atual) if ec_atual in lista_ec else 0
+            estado_civil = c8.selectbox("Estado Civil", lista_ec, index=idx_ec)
 
             st.subheader("2. Endereço Completo")
             e1, e2 = st.columns([3, 1])
-            logradouro = e1.text_input("Logradouro (Rua/Av) {{ logradouro }}", value=dados.get('logradouro', ''))
-            numero = e2.text_input("Número {{ numero }}", value=dados.get('numero', ''))
+            logradouro = e1.text_input("Logradouro (Rua/Av)", value=dados.get('logradouro', ''))
+            numero = e2.text_input("Número", value=dados.get('numero', ''))
             
             e3, e4 = st.columns([1, 1])
-            complemento = e3.text_input("Complemento {{ complemento }}", value=dados.get('complemento', ''))
-            bairro = e4.text_input("Bairro {{ bairro }}", value=dados.get('bairro', ''))
+            complemento = e3.text_input("Complemento", value=dados.get('complemento', ''))
+            bairro = e4.text_input("Bairro", value=dados.get('bairro', ''))
             
             e5, e6, e7 = st.columns(3)
-            cidade = e5.text_input("Cidade {{ cidade }}", value=dados.get('cidade', ''))
-            uf = e6.text_input("UF {{ uf }}", value=dados.get('uf', ''), max_chars=2)
-            cep = e7.text_input("CEP {{ cep }}", value=dados.get('cep', ''))
+            cidade = e5.text_input("Cidade", value=dados.get('cidade', ''))
+            uf = e6.text_input("UF", value=dados.get('uf', ''), max_chars=2)
+            cep = e7.text_input("CEP", value=dados.get('cep', ''))
 
             st.subheader("3. Dados Profissionais (Médicos)")
             p1, p2 = st.columns(2)
-            crm = p1.text_input("CRM Primário {{ crm }}", value=dados.get('crm', ''))
-            area = p2.text_input("Área de Formação {{ área_formação }}", value=dados.get('area_formacao', ''))
+            crm = p1.text_input("CRM Primário", value=dados.get('crm', ''))
+            area = p2.text_input("Área de Formação", value=dados.get('area_formacao', ''))
 
             if st.form_submit_button("💾 Salvar Cadastro do Aluno"):
                 payload = {
@@ -186,14 +187,14 @@ def tela_gestao_alunos():
                     "crm": crm, "area_formacao": area
                 }
                 upsert_aluno(payload)
-                st.success("Dados do aluno salvos com sucesso! Agora você pode gerar o contrato.")
-                # Limpa sessão para forçar recarregamento se necessário
+                st.success("Dados do aluno salvos com sucesso!")
+                # Limpa a sessão para forçar nova busca se quiser
                 del st.session_state['dados_aluno_atual']
+                st.rerun()
 
 def tela_novo_contrato():
     st.header("📝 Emissão de Contrato")
     
-    # ETAPA 1: SELEÇÃO
     col_sel1, col_sel2 = st.columns(2)
     cpf_aluno = col_sel1.text_input("Passo 1: Digite CPF do Aluno cadastrado")
     
@@ -221,25 +222,21 @@ def tela_novo_contrato():
             st.warning("Este curso não possui turmas abertas.")
             st.stop()
 
-    # ETAPA 2: FINANCEIRO
     if aluno and curso_selecionado and turma_selecionada:
         st.divider()
         st.subheader("Configuração Financeira")
         
         with st.form("form_contrato"):
-            # Valores Base
             valor_base = float(curso_selecionado['valor_bruto'])
             
             c1, c2, c3 = st.columns(3)
-            c1.metric("Valor do Curso {{ valor_curso }}", f"R$ {valor_base:,.2f}")
-            percentual = c2.number_input("% Desconto {{ pencentual_desconto }}", 0.0, 100.0, 0.0, step=0.5)
+            c1.metric("Valor do Curso", f"R$ {valor_base:,.2f}")
+            percentual = c2.number_input("% Desconto", 0.0, 100.0, 0.0, step=0.5)
             
-            # Cálculos em tempo real (dentro do submit ou via session state, aqui simplificado)
             valor_desconto = valor_base * (percentual / 100)
             valor_final = valor_base - valor_desconto
             
-            c3.metric("Valor Final (Saldo) {{ valor_final }}", f"R$ {valor_final:,.2f}")
-            st.caption(f"Desconto calculado: R$ {valor_desconto:,.2f}")
+            c3.metric("Valor Final (Saldo)", f"R$ {valor_final:,.2f}")
 
             st.markdown("---")
             st.write("**Entrada**")
@@ -254,19 +251,17 @@ def tela_novo_contrato():
             
             col_sal1, col_sal2 = st.columns(2)
             saldo_qtd = col_sal1.number_input("Nº Parcelas Saldo", 1, 60, 12)
-            saldo_dt = col_sal2.date_input("Vencimento 1ª Saldo (As demais serão +30 dias)", value=date.today())
+            saldo_dt = col_sal2.date_input("Vencimento 1ª Saldo", value=date.today())
 
             st.markdown("---")
             col_opt1, col_opt2 = st.columns(2)
-            bolsista = col_opt1.checkbox("É Bolsista? {{ bolsista }}")
-            atendimento = col_opt2.checkbox("Atendimento a Paciente? {{ atendimento }}")
+            bolsista = col_opt1.checkbox("É Bolsista?")
+            atendimento = col_opt2.checkbox("Atendimento a Paciente?")
             
-            # Botão de Geração
             btn_gerar = st.form_submit_button("🚀 Gerar Contrato e Enviar E-mail")
             
             if btn_gerar:
                 with st.spinner("Gerando PDF, salvando no banco e enviando e-mail..."):
-                    # Prepara dados para salvar no banco (Tabela Contratos)
                     dados_contrato = {
                         "aluno_id": aluno['id'],
                         "turma_id": turma_selecionada['id'],
@@ -274,10 +269,10 @@ def tela_novo_contrato():
                         "percentual_desconto": percentual,
                         "valor_desconto": valor_desconto,
                         "valor_final": valor_final,
-                        "valor_material": valor_base * 0.3, # Regra de Negócio Fixa
+                        "valor_material": valor_base * 0.3,
                         "entrada_valor": entrada_val,
                         "entrada_qtd_parcelas": entrada_qtd,
-                        "entrada_forma_pagamento": "Boleto/Pix", # Padrão ou adicionar selectbox
+                        "entrada_forma_pagamento": "Boleto/Pix",
                         "saldo_valor": saldo_restante,
                         "saldo_qtd_parcelas": saldo_qtd,
                         "saldo_forma_pagamento": "Boleto/Pix",
@@ -291,24 +286,21 @@ def tela_novo_contrato():
                         "saldo": saldo_dt
                     }
                     
-                    # 1. Gera PDF e Sobe no Storage
                     caminho_pdf = gerar_contrato_pdf(aluno, turma_selecionada, curso_selecionado, dados_contrato, datas_vencimento)
                     
                     if caminho_pdf:
-                        # 2. Salva registro no Banco
                         dados_contrato['caminho_arquivo'] = caminho_pdf
                         contrato_salvo = create_contrato(dados_contrato)
                         
-                        # 3. Envia E-mail
-                        # AJUSTE SUA URL FINAL AQUI QUANDO FIZER O DEPLOY
-                        link_acesso = f"https://SEU-APP-NAME.streamlit.app/?token={contrato_salvo['token_acesso']}"
+                        # Use URL dinâmica ou hardcoded do seu app
+                        link_acesso = f"https://nexusmed-contratos.streamlit.app/?token={contrato_salvo['token_acesso']}"
                         enviou = enviar_email(aluno['email'], aluno['nome_completo'], link_acesso)
                         
                         if enviou:
-                            st.success("✅ Processo concluído! O aluno recebeu o link para assinatura.")
+                            st.success("✅ Processo concluído! O aluno recebeu o link.")
                             st.balloons()
                         else:
-                            st.warning("Contrato gerado, mas houve erro no envio do e-mail.")
+                            st.warning("Contrato gerado, mas erro no e-mail.")
                     else:
                         st.error("Erro na geração do PDF.")
 
@@ -322,8 +314,14 @@ def tela_aceite_aluno(token):
         st.stop()
         
     contrato = contrato_data
-    aluno = contrato_data['alunos'] # Supabase traz o join
+    # O repository novo retorna 'alunos' (plural) no join, ou 'aluno' dependendo do nome
+    # Ajuste para garantir compatibilidade com o retorno do Supabase
+    aluno = contrato_data.get('alunos') or contrato_data.get('aluno')
     
+    if not aluno:
+        st.error("Erro nos dados do aluno.")
+        st.stop()
+
     if contrato['status'] == 'assinado':
         st.info(f"✅ Este contrato já foi assinado em {contrato.get('data_aceite')}.")
         return
@@ -332,54 +330,42 @@ def tela_aceite_aluno(token):
     st.markdown(f"Olá, **{aluno['nome_completo']}**.")
     st.write("Por favor, revise os termos do contrato enviado para o seu e-mail e confirme abaixo.")
     
-    st.info("ℹ️ O PDF do contrato foi enviado em anexo no e-mail de notificação.")
-
     st.divider()
     st.subheader("✍️ Assinatura Digital")
     
     with st.form("form_aceite_digital"):
         st.write("Para validar sua assinatura, confirme seus dados cadastrais:")
-        
         col_a1, col_a2 = st.columns(2)
         nome_input = col_a1.text_input("Seu Nome Completo")
         cpf_input = col_a2.text_input("Seu CPF (apenas números)")
         
-        st.markdown("<br>", unsafe_allow_html=True)
-        check_termos = st.checkbox("Declaro que li o contrato, concordo com todas as cláusulas e autorizo a assinatura digital.")
+        check_termos = st.checkbox("Declaro que li o contrato e concordo com todas as cláusulas.")
         
         btn_assinar = st.form_submit_button("✅ ASSINAR CONTRATO")
         
         if btn_assinar:
-            # Validações de Segurança
             cpf_real = aluno['cpf']
             cpf_digitado = ''.join(filter(str.isdigit, cpf_input))
             
             if cpf_digitado != cpf_real:
-                st.error("CPF incorreto. A assinatura só pode ser realizada pelo titular do contrato.")
+                st.error("CPF incorreto.")
             elif nome_input.lower().strip() != aluno['nome_completo'].lower().strip():
-                st.warning("O nome digitado não confere exatamente com o cadastro. Verifique acentos ou espaços.")
+                st.warning("O nome digitado não confere exatamente com o cadastro.")
             elif not check_termos:
                 st.error("Você precisa marcar a caixa concordando com os termos.")
             else:
-                # PROCESSO DE ASSINATURA E CARIMBO
-                with st.spinner("Registrando assinatura na Blockchain (simulado) e aplicando carimbo..."):
-                    
-                    # 1. Dados do Carimbo
+                with st.spinner("Registrando assinatura e carimbando..."):
                     fuso = pytz.timezone('America/Sao_Paulo')
                     agora = datetime.now(fuso)
-                    ip = "IP_DO_CLIENTE" # Streamlit Cloud nem sempre passa o IP real, usamos placeholder ou headers
-                    try:
-                        ip = st.context.headers.get("X-Forwarded-For", "0.0.0.0")
-                    except:
-                        pass
+                    ip = "IP_CLIENTE"
+                    try: ip = st.context.headers.get("X-Forwarded-For", "0.0.0.0")
+                    except: pass
                     
-                    # Gerar Hash Único
                     raw_data = f"{contrato['id']}|{agora}|{cpf_real}"
                     hash_ass = hashlib.sha256(raw_data.encode()).hexdigest().upper()
                     
-                    link_validacao = f"https://SEU-APP.streamlit.app/?token={token}"
+                    link_validacao = f"https://nexusmed-contratos.streamlit.app/?token={token}"
                     
-                    # Texto Exato solicitado
                     texto_carimbo = f"""ACEITE DIGITAL REALIZADO
 Data/Hora: {agora.strftime('%d/%m/%Y às %H:%M:%S')} (GMT-3)
 Nome: {aluno['nome_completo']}
@@ -389,23 +375,20 @@ IP: {ip}
 Link: {link_validacao}
 Hash: {hash_ass}"""
 
-                    # 2. Aplicar Carimbo no PDF
                     caminho_original = contrato['caminho_arquivo']
                     novo_caminho = aplicar_carimbo_digital(caminho_original, texto_carimbo)
                     
                     if novo_caminho:
-                        # 3. Atualizar Banco de Dados
                         registrar_aceite(contrato['id'], {
                             "status": "assinado",
                             "data_aceite": agora.isoformat(),
                             "ip_aceite": ip,
                             "hash_aceite": hash_ass,
                             "recibo_aceite_texto": texto_carimbo,
-                            "caminho_arquivo": novo_caminho # Atualiza para o PDF assinado
+                            "caminho_arquivo": novo_caminho
                         })
-                        
                         st.balloons()
-                        st.success("Contrato assinado com sucesso! Uma cópia autenticada foi salva.")
+                        st.success("Contrato assinado com sucesso!")
                         st.code(texto_carimbo, language="text")
                     else:
-                        st.error("Erro técnico ao aplicar assinatura no documento.")
+                        st.error("Erro técnico ao aplicar assinatura.")
