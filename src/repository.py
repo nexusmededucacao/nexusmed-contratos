@@ -52,8 +52,7 @@ def get_aluno_by_cpf(cpf):
 
 def upsert_aluno(dados):
     """
-    Salva o aluno e busca os dados atualizados em duas etapas separadas
-    para evitar o erro 'SyncQueryRequestBuilder has no attribute select'
+    Função corrigida: Salva SEM .select() e busca o aluno depois.
     """
     try:
         # 1. Limpeza de dados
@@ -63,12 +62,11 @@ def upsert_aluno(dados):
         if 'data_nascimento' in dados and not dados['data_nascimento']:
              dados['data_nascimento'] = None
 
-        # 2. A CORREÇÃO: Executa o salvamento SEM .select()
-        # Isso evita o erro técnico da biblioteca
+        # 2. O PULO DO GATO: Removemos o .select() aqui!
+        # Apenas executa o salvamento.
         supabase.table("alunos").upsert(dados, on_conflict="cpf").execute()
         
-        # 3. Busca Manual: Já que salvamos, agora buscamos o registro salvo
-        # para garantir que temos o ID correto.
+        # 3. Busca Manual: Agora buscamos o que acabamos de salvar para garantir
         return get_aluno_by_cpf(dados['cpf'])
 
     except Exception as e:
