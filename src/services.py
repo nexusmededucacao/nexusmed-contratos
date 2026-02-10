@@ -14,6 +14,100 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from src.db import supabase
 
+# --- IMPORTS PARA RECRIAR O WORD (AUTO-FIX) ---
+from docx import Document
+from docx.shared import Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+# --- FUNÇÃO DE AUTO-REPARO DO TEMPLATE ---
+def restaurar_template_padrao():
+    """Cria um novo template_contrato.docx se ele estiver faltando ou corrompido"""
+    caminho = "assets/modelo_contrato_V2.docx"
+    
+    # Garante pasta assets
+    if not os.path.exists("assets"):
+        os.makedirs("assets")
+
+    doc = Document()
+    
+    # Estilos
+    style = doc.styles['Normal']
+    font = style.font
+    font.name = 'Arial'
+    font.size = Pt(11)
+
+    # Conteúdo
+    h = doc.add_heading('CONTRATO DE PRESTAÇÃO DE SERVIÇOS', 0)
+    h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_paragraph('')
+
+    p = doc.add_paragraph()
+    p.add_run('CONTRATANTE: ').bold = True
+    p.add_run('{{ nome_aluno }}')
+    
+    p = doc.add_paragraph()
+    p.add_run('CPF: ').bold = True
+    p.add_run('{{ cpf_aluno }}  ')
+    p.add_run('RG: ').bold = True
+    p.add_run('{{ rg_aluno }}')
+    
+    p = doc.add_paragraph()
+    p.add_run('ENDEREÇO: ').bold = True
+    p.add_run('{{ endereco_aluno }} - {{ cidade_aluno }} (CEP: {{ cep_aluno }})')
+
+    doc.add_paragraph('')
+
+    p = doc.add_paragraph()
+    p.add_run('OBJETO: ').bold = True
+    p.add_run('Curso de Pós-Graduação em {{ nome_curso }} (Turma: {{ turma }}).')
+    
+    doc.add_heading('Condições Financeiras', level=1)
+    
+    # Tabela Entrada
+    doc.add_heading('1. Entrada Detalhada', level=2)
+    table = doc.add_table(rows=2, cols=4)
+    table.style = 'Table Grid'
+    
+    # Cabeçalho
+    hdr = table.rows[0].cells
+    hdr[0].text = 'Parc.'
+    hdr[1].text = 'Vencimento'
+    hdr[2].text = 'Valor'
+    hdr[3].text = 'Forma'
+    
+    # Linha Loop (CORRIGIDA)
+    row = table.rows[1].cells
+    row[0].paragraphs[0].add_run('{% tr for item in tbl_entrada %}{{ item.numero }}')
+    row[1].text = '{{ item.data_vencimento }}'
+    row[2].text = '{{ item.valor }}'
+    row[3].paragraphs[0].add_run('{{ item.forma_pagamento }}{% tr endfor %}')
+
+    doc.add_paragraph('')
+
+    # Tabela Saldo
+    doc.add_heading('2. Saldo Restante', level=2)
+    table2 = doc.add_table(rows=2, cols=4)
+    table2.style = 'Table Grid'
+    
+    hdr2 = table2.rows[0].cells
+    hdr2[0].text = 'Parc.'
+    hdr2[1].text = 'Vencimento'
+    hdr2[2].text = 'Valor'
+    hdr2[3].text = 'Forma'
+    
+    row2 = table2.rows[1].cells
+    row2[0].paragraphs[0].add_run('{% tr for item in tbl_saldo %}{{ item.numero }}')
+    row2[1].text = '{{ item.data_vencimento }}'
+    row2[2].text = '{{ item.valor }}'
+    row2[3].paragraphs[0].add_run('{{ item.forma_pagamento }}{% tr endfor %}')
+
+    doc.add_paragraph('')
+    doc.add_paragraph('___________________________________________').alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_paragraph('{{ nome_aluno }}').alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    doc.save(caminho)
+    return caminho
+
 # --- FUNÇÕES AUXILIARES ---
 
 def format_moeda(valor):
@@ -32,10 +126,8 @@ def format_data(data_obj):
         return str(data_obj)
 
 def gerar_parcelas_saldo(valor_total, qtd, data_ini_str, forma):
-    """Gera a lista de parcelas do saldo para o PDF"""
     lista = []
     if qtd <= 0: return lista
-    
     try:
         if isinstance(data_ini_str, str):
             data_ini = datetime.strptime(data_ini_str, "%Y-%m-%d")
@@ -45,7 +137,6 @@ def gerar_parcelas_saldo(valor_total, qtd, data_ini_str, forma):
         data_ini = datetime.now()
 
     val_p = valor_total / qtd
-    
     for i in range(qtd):
         dt = data_ini + relativedelta(months=+i)
         lista.append({
@@ -61,25 +152,14 @@ def gerar_parcelas_saldo(valor_total, qtd, data_ini_str, forma):
 def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
     hoje = datetime.now()
 
-    # 1. Definir caminho do Template (CORREÇÃO AQUI)
-    template_path = "assets/modelo_contrato_V2.docx"
-    
-    # Fallback: Se não achar na pasta assets, tenta na raiz
-    if not os.path.exists(template_path):
-        if os.path.exists("modelo_contrato_V2.docx"):
-            template_path = "modelo_contrato_V2.docx"
-        elif os.path.exists("template_contrato.docx"):
-            template_path = "template_contrato.docx"
-        else:
-            st.error(f"❌ ERRO CRÍTICO: O arquivo '{template_path}' não foi encontrado na pasta do projeto.")
-            return None
+    # 1. AUTO-CORREÇÃO: Recria o template sempre que chamar, para garantir que está limpo
+    template_path = restaurar_template_padrao()
 
-    # 2. Processar Entrada (Detalhada vinda do UI)
+    # 2. Dados da Entrada
     tbl_entrada = []
     detalhes_entrada = datas_info.get('detalhes_entrada', [])
     
     if detalhes_entrada:
-        # Se veio detalhado do UI (V6/V7), usa isso
         for item in detalhes_entrada:
             tbl_entrada.append({
                 "numero": item['numero'],
@@ -88,7 +168,6 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
                 "forma_pagamento": item['forma']
             })
     else:
-        # Fallback para contratos antigos
         vlr = contrato['entrada_valor'] / max(1, int(contrato['entrada_qtd_parcelas']))
         for i in range(int(contrato['entrada_qtd_parcelas'])):
             tbl_entrada.append({
@@ -98,7 +177,7 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
                 "forma_pagamento": contrato['entrada_forma_pagamento']
             })
 
-    # 3. Processar Saldo (Calculado Agora)
+    # 3. Dados do Saldo
     tbl_saldo = gerar_parcelas_saldo(
         float(contrato['saldo_valor']), 
         int(contrato['saldo_qtd_parcelas']), 
@@ -106,9 +185,8 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
         contrato['saldo_forma_pagamento']
     )
 
-    # 4. Montar Contexto (Dicionário para o Word)
+    # 4. Contexto
     context = {
-        # PESSOAL
         "nome_aluno": aluno['nome_completo'].upper(),
         "cpf_aluno": aluno['cpf'],
         "rg_aluno": aluno.get('rg', ''),
@@ -117,33 +195,25 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
         "endereco_aluno": f"{aluno.get('logradouro','')}, {aluno.get('numero','')}",
         "cidade_aluno": f"{aluno.get('cidade','')} - {aluno.get('uf','')}",
         "cep_aluno": aluno.get('cep', ''),
-        
-        # CURSO
         "nome_curso": curso['nome'],
         "turma": turma['codigo_turma'],
         "carga_horaria": str(curso.get('carga_horaria', '')),
         "data_inicio": format_data(turma.get('data_inicio')),
         "data_fim": format_data(turma.get('data_fim')),
-        
-        # FINANCEIRO
         "valor_bruto": format_moeda(contrato['valor_curso']),
         "desconto_perc": f"{contrato['percentual_desconto']}%",
         "valor_desconto": format_moeda(contrato['valor_desconto']),
         "valor_final": format_moeda(contrato['valor_final']),
         "entrada_total": format_moeda(contrato['entrada_valor']),
+        "tbl_entrada": tbl_entrada,
         "saldo_total": format_moeda(contrato['saldo_valor']),
         "saldo_qtd": str(contrato['saldo_qtd_parcelas']),
-        
-        # TABELAS
-        "tbl_entrada": tbl_entrada,
         "tbl_saldo": tbl_saldo,
-        
-        # DATA
         "data_hoje": hoje.strftime("%d/%m/%Y")
     }
 
     try:
-        # 5. Renderizar e Converter
+        # 5. Renderizar
         doc = DocxTemplate(template_path)
         doc.render(context)
         
@@ -153,16 +223,14 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
         
         doc.save(docx_path)
         
-        # Tenta converter com LibreOffice
+        # Converter PDF
         cmd = ["soffice", "--headless", "--convert-to", "pdf", "--outdir", "/tmp", docx_path]
         subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
-        # Verifica se gerou PDF, senão usa DOCX
         final_path = pdf_path if os.path.exists(pdf_path) else docx_path
         mime_type = "application/pdf" if os.path.exists(pdf_path) else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         ext = ".pdf" if os.path.exists(pdf_path) else ".docx"
         
-        # Upload Supabase
         storage_path = f"{hoje.year}/{hoje.month}/{filename}{ext}"
         with open(final_path, "rb") as f:
             supabase.storage.from_("contratos").upload(
@@ -172,13 +240,13 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
         return storage_path
 
     except Exception as e:
-        st.error(f"Erro ao processar documento: {e}")
+        st.error(f"Erro ao processar: {e}")
         return None
 
 # --- ASSINATURA E E-MAIL ---
 
 def aplicar_carimbo_digital(path_original, texto_carimbo):
-    if path_original.endswith(".docx"): return path_original # Não carimba docx
+    if path_original.endswith(".docx"): return path_original
     
     try:
         data = supabase.storage.from_("contratos").download(path_original)
@@ -222,11 +290,7 @@ def enviar_email(destinatario, nome, link):
         msg['To'] = destinatario
         msg['Subject'] = "Contrato NexusMed - Assinatura Pendente"
         
-        html = f"""
-        <p>Olá, {nome}.</p>
-        <p>Clique abaixo para assinar seu contrato:</p>
-        <a href="{link}"><b>ASSINAR CONTRATO AGORA</b></a>
-        """
+        html = f"""<p>Olá, {nome}. <a href="{link}">Clique aqui para assinar</a></p>"""
         msg.attach(MIMEText(html, 'html'))
         
         server = smtplib.SMTP("smtp.gmail.com", 587)
