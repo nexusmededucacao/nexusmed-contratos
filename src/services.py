@@ -20,8 +20,8 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 def criar_template_temporario():
     """
-    Cria um arquivo .docx limpo na pasta temporária do servidor.
-    Isso evita erros de sintaxe XML causados por edições manuais no Word.
+    Cria um arquivo .docx limpo na pasta temporária.
+    CORREÇÃO: Usa sintaxe padrão {% for %} em vez de {% tr for %}
     """
     caminho_temp = "/tmp/template_limpo.docx"
     
@@ -39,20 +39,23 @@ def criar_template_temporario():
     # Dados
     p = doc.add_paragraph()
     p.add_run('CONTRATANTE: ').bold = True
-    p.add_run('{{ nome_aluno }} (CPF: {{ cpf_aluno }}), residente em {{ endereco_aluno }} - {{ cidade_aluno }}.')
+    p.add_run('{{ nome_aluno }} (CPF: {{ cpf_aluno }}), residente em {{ endereco_aluno }} - {{ cidade_aluno }} (CEP: {{ cep_aluno }}).')
     
     p = doc.add_paragraph()
     p.add_run('OBJETO: ').bold = True
     p.add_run('Curso de Pós-Graduação em {{ nome_curso }} (Turma: {{ turma }}).')
+    p.add_run(' Carga Horária: {{ carga_horaria }}h.')
 
     # Financeiro Resumo
     doc.add_heading('Condições Financeiras', level=1)
     p = doc.add_paragraph()
-    p.add_run('Valor Total: {{ valor_bruto }} | Desconto: {{ desconto_perc }} | ').bold = False
+    p.add_run('Valor Bruto: {{ valor_bruto }} | Desconto: {{ desconto_perc }} | ').bold = False
     p.add_run('Final: {{ valor_final }}').bold = True
 
     # --- TABELA 1: ENTRADA ---
     doc.add_heading('1. Detalhamento da Entrada', level=2)
+    p = doc.add_paragraph('Pagamento da entrada de {{ entrada_total }} realizado da seguinte forma:')
+
     table = doc.add_table(rows=2, cols=4)
     table.style = 'Table Grid'
     
@@ -63,18 +66,23 @@ def criar_template_temporario():
     hdr[2].text = 'Valor'
     hdr[3].text = 'Forma'
     
-    # Linha de Dados (Onde estava o erro)
-    # AQUI O CÓDIGO É PURO, SEM SUJEIRA DO WORD
+    # Linha de Dados (CORRIGIDA: REMOVIDO O 'tr')
     row = table.rows[1].cells
-    row[0].paragraphs[0].add_run('{% tr for item in tbl_entrada %}{{ item.numero }}')
+    
+    # Célula 1: Abre o loop com {% for ... %} (sem o tr)
+    row[0].paragraphs[0].add_run('{% for item in tbl_entrada %}{{ item.numero }}')
     row[1].text = '{{ item.data_vencimento }}'
     row[2].text = '{{ item.valor }}'
-    row[3].paragraphs[0].add_run('{{ item.forma_pagamento }}{% tr endfor %}')
+    
+    # Célula 4: Fecha o loop com {% endfor %} (sem o tr)
+    row[3].paragraphs[0].add_run('{{ item.forma_pagamento }}{% endfor %}')
 
     doc.add_paragraph('')
 
     # --- TABELA 2: SALDO ---
     doc.add_heading('2. Detalhamento do Saldo', level=2)
+    p = doc.add_paragraph('O saldo restante de {{ saldo_total }} será parcelado em {{ saldo_qtd }} vezes:')
+
     table2 = doc.add_table(rows=2, cols=4)
     table2.style = 'Table Grid'
     
@@ -85,20 +93,26 @@ def criar_template_temporario():
     hdr2[3].text = 'Forma'
     
     row2 = table2.rows[1].cells
-    row2[0].paragraphs[0].add_run('{% tr for item in tbl_saldo %}{{ item.numero }}')
+    
+    # Loop Saldo (CORRIGIDO: REMOVIDO O 'tr')
+    row2[0].paragraphs[0].add_run('{% for item in tbl_saldo %}{{ item.numero }}')
     row2[1].text = '{{ item.data_vencimento }}'
     row2[2].text = '{{ item.valor }}'
-    row2[3].paragraphs[0].add_run('{{ item.forma_pagamento }}{% tr endfor %}')
+    row2[3].paragraphs[0].add_run('{{ item.forma_pagamento }}{% endfor %}')
 
     # Assinaturas
     doc.add_paragraph('')
     doc.add_paragraph('_______________________________').alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph('{{ nome_aluno }}').alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_paragraph('CPF: {{ cpf_aluno }}').alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    doc.add_paragraph('')
+    doc.add_paragraph('Porto Alegre, {{ data_hoje }}').alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
     doc.save(caminho_temp)
     return caminho_temp
 
-# --- FUNÇÕES DE FORMATAÇÃO ---
+# --- FUNÇÕES AUXILIARES ---
 
 def format_moeda(valor):
     if valor is None: return "R$ 0,00"
@@ -142,7 +156,7 @@ def gerar_parcelas_saldo(valor_total, qtd, data_ini_str, forma):
 def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
     hoje = datetime.now()
 
-    # 1. GERA O TEMPLATE LIMPO NA HORA (Adeus erro de tag!)
+    # 1. GERA O TEMPLATE LIMPO NA HORA
     try:
         template_path = criar_template_temporario()
     except Exception as e:
@@ -183,16 +197,22 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
     context = {
         "nome_aluno": aluno['nome_completo'].upper(),
         "cpf_aluno": aluno['cpf'],
+        "rg_aluno": aluno.get('rg', ''),
         "endereco_aluno": f"{aluno.get('logradouro','')}, {aluno.get('numero','')}",
         "cidade_aluno": f"{aluno.get('cidade','')} - {aluno.get('uf','')}",
         "cep_aluno": aluno.get('cep', ''),
         "nome_curso": curso['nome'],
         "turma": turma['codigo_turma'],
+        "carga_horaria": str(curso.get('carga_horaria', '')),
         "valor_bruto": format_moeda(contrato['valor_curso']),
         "desconto_perc": f"{contrato['percentual_desconto']}%",
         "valor_final": format_moeda(contrato['valor_final']),
+        "entrada_total": format_moeda(contrato['entrada_valor']),
+        "saldo_total": format_moeda(contrato['saldo_valor']),
+        "saldo_qtd": str(contrato['saldo_qtd_parcelas']),
         "tbl_entrada": tbl_entrada,
-        "tbl_saldo": tbl_saldo
+        "tbl_saldo": tbl_saldo,
+        "data_hoje": hoje.strftime("%d/%m/%Y")
     }
 
     try:
@@ -228,7 +248,7 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
         st.error(f"Erro ao processar documento: {e}")
         return None
 
-# --- CARIMBO E EMAIL ---
+# --- ASSINATURA E E-MAIL ---
 
 def aplicar_carimbo_digital(path_original, texto_carimbo):
     if path_original.endswith(".docx"): return path_original
