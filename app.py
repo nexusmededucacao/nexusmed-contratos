@@ -1,4 +1,13 @@
 import streamlit as st
+import sys
+import os
+
+# --- CORREÇÃO DE CAMINHO (A MARRETA) ---
+# Adiciona a pasta raiz do projeto ao Python Path para garantir que ele ache o 'src'
+root_path = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(root_path)
+
+# --- IMPORTS AGORA VÃO FUNCIONAR ---
 from src.auth import criar_admin_inicial
 from src.ui import (
     render_login, render_sidebar, 
