@@ -1,10 +1,9 @@
 import streamlit as st
 import pandas as pd
 import hashlib
-import pytz
 import time
-from datetime import datetime, date
-from datetime import timedelta
+import pytz
+from datetime import datetime, date, timedelta
 from src.auth import login_usuario
 from src.repository import (
     get_cursos, create_curso, 
@@ -17,7 +16,7 @@ from src.services import gerar_contrato_pdf, enviar_email, aplicar_carimbo_digit
 # --- COMPONENTES AUXILIARES ---
 
 def render_login():
-    st.markdown("<h1 style='text-align: center;'>🔒 NexusMed Portal</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>🚀 VERSÃO 3.0 (Entrada Detalhada)</h1>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1,1,1])
     with col2:
         with st.form("login_form"):
@@ -180,7 +179,6 @@ def tela_gestao_alunos():
             submitted = st.form_submit_button("💾 Salvar Cadastro do Aluno")
 
             if submitted:
-                # 1. Validação básica de campos obrigatórios
                 if not nome or not cpf:
                     st.error("Erro: Nome e CPF são obrigatórios.")
                 else:
@@ -192,30 +190,21 @@ def tela_gestao_alunos():
                         "bairro": bairro, "cidade": cidade, "uf": uf, "cep": cep,
                         "crm": crm, "area_formacao": area
                     }
-                    
-                    # 2. Chama o banco e espera o retorno
                     resultado = upsert_aluno(payload)
-                    
-                    # 3. Verifica se salvou de verdade
                     if resultado:
                         st.toast("✅ Aluno salvo com sucesso!", icon="🎉")
                         st.success("Dados salvos! Recarregando...")
-                        
-                        # Remove dados da sessão para limpar o formulário
                         if 'dados_aluno_atual' in st.session_state:
                             del st.session_state['dados_aluno_atual']
-                        
-                        # 4. PAUSA IMPORTANTE: Espera 2 segundos para você ver a mensagem
-                        time.sleep(2)
+                        time.sleep(1.5)
                         st.rerun()
                     else:
                         st.error("❌ Erro ao salvar! Verifique se o CPF já existe ou se o banco está conectado.")
 
-# --- SUBSTITUIR A FUNÇÃO tela_novo_contrato INTEIRA POR ESTA ---
+# --- TELA DE CONTRATOS (ATUALIZADA) ---
 def tela_novo_contrato():
-    st.header("🔥🔥🔥 VERSÃO NOVA ATIVADA 🔥🔥🔥")
+    st.header("📝 Emissão de Contrato e Check-out")
 
-    # --- SELEÇÃO DE ALUNO E CURSO ---
     col_sel1, col_sel2 = st.columns(2)
     cpf_aluno = col_sel1.text_input("Passo 1: Digite CPF do Aluno", placeholder="Apenas números")
     
@@ -248,52 +237,70 @@ def tela_novo_contrato():
         st.stop()
 
     st.markdown("---")
-    st.subheader("💰 Configuração Financeira (Cálculos Reais)")
+    st.subheader("💰 Configuração Financeira")
 
-    # --- BLOCO 1: VALOR E DESCONTO ---
-    # Removemos o st.form para permitir calculo em tempo real
+    # --- VALOR E DESCONTO ---
     valor_base = float(curso_sel['valor_bruto'])
-    
     c1, c2, c3 = st.columns(3)
     c1.metric("Valor Tabela", f"R$ {valor_base:,.2f}")
     
-    # Input do desconto com atualização imediata
     percentual = c2.number_input("% Desconto", 0.0, 100.0, 0.0, step=0.5)
     valor_desconto = valor_base * (percentual / 100)
-    
     valor_final = valor_base - valor_desconto
     c3.metric("Valor Negociado (Final)", f"R$ {valor_final:,.2f}", delta=f"- R$ {valor_desconto:,.2f}")
 
     st.markdown("---")
     
-    # --- BLOCO 2: ENTRADA ---
-    st.write("### 1. Entrada")
-    col_e1, col_e2, col_e3 = st.columns(3)
+    # --- ENTRADA (NOVA LÓGICA DE LINHAS) ---
+    st.write("### 1. Entrada Detalhada")
     
-    entrada_val = col_e1.number_input("Valor da Entrada (R$)", 0.0, valor_final, 0.0, step=100.0)
+    # Linha 1: Valor Total e Quantidade
+    col_e1, col_e2 = st.columns(2)
+    entrada_val_total = col_e1.number_input("Valor TOTAL da Entrada (R$)", 0.0, valor_final, 0.0, step=100.0)
     entrada_qtd = col_e2.number_input("Qtd Parcelas Entrada", 1, 12, 1)
-    entrada_forma = col_e3.selectbox("Forma Pagto Entrada", ["PIX", "Boleto", "Cartão de Crédito", "Dinheiro"])
-    
-    # Datas dinâmicas da entrada
-    datas_entrada = []
-    if entrada_qtd > 0:
-        st.caption("📅 Vencimentos da Entrada:")
-        cols_datas = st.columns(min(entrada_qtd, 4)) # Mostra até 4 por linha
-        for i in range(entrada_qtd):
-            # Lógica para quebra de linha visual se tiver muitas parcelas
-            with cols_datas[i % 4]:
-                dt = st.date_input(f"Parc. {i+1}", value=date.today() + timedelta(days=i*30), key=f"ent_dt_{i}")
-                datas_entrada.append(dt)
 
-    # --- BLOCO 3: SALDO ---
+    # Linhas Dinâmicas: Uma para cada parcela
+    detalhes_entrada = []
+    
+    # Calcula valor médio para sugestão
+    valor_sugerido = entrada_val_total / entrada_qtd if entrada_qtd > 0 else 0
+    
+    opcoes_pagto_entrada = ["PIX", "Boleto", "Cartão de Crédito", "Dinheiro", "Cheque"]
+    
+    if entrada_qtd > 0:
+        st.write("Configuração das Parcelas da Entrada:")
+        for i in range(entrada_qtd):
+            c_p1, c_p2, c_p3 = st.columns([1.5, 1.5, 2])
+            
+            with c_p1:
+                vlr_parc = st.number_input(f"Valor {i+1}ª Parc.", value=valor_sugerido, step=10.0, key=f"ent_val_{i}")
+            with c_p2:
+                # Sugere datas de 30 em 30 dias a partir de hoje
+                dt_sugestao = date.today() + timedelta(days=i*30)
+                dt_parc = st.date_input(f"Vencimento {i+1}ª", value=dt_sugestao, key=f"ent_dt_{i}")
+            with c_p3:
+                forma_parc = st.selectbox(f"Forma Pagto {i+1}ª", opcoes_pagto_entrada, key=f"ent_forma_{i}")
+            
+            detalhes_entrada.append({
+                "numero": i+1,
+                "valor": vlr_parc,
+                "data": dt_parc,
+                "forma": forma_parc
+            })
+            
+        # Validação Visual
+        soma_parcelas = sum(d['valor'] for d in detalhes_entrada)
+        if abs(soma_parcelas - entrada_val_total) > 0.01:
+            st.warning(f"⚠️ A soma das parcelas (R$ {soma_parcelas:,.2f}) está diferente do Total da Entrada (R$ {entrada_val_total:,.2f}). Ajuste os valores.")
+
+    # --- SALDO ---
     st.markdown("---")
     st.write("### 2. Saldo Remanescente")
     
-    saldo_restante = valor_final - entrada_val
+    saldo_restante = valor_final - entrada_val_total
     
-    # Validação visual
     if saldo_restante < 0:
-        st.error(f"Erro: A entrada (R$ {entrada_val}) é maior que o valor final (R$ {valor_final})!")
+        st.error(f"Erro: A entrada é maior que o valor total!")
         st.stop()
     
     st.info(f"💵 Saldo a Parcelar: **R$ {saldo_restante:,.2f}**")
@@ -301,9 +308,12 @@ def tela_novo_contrato():
     col_s1, col_s2, col_s3 = st.columns(3)
     saldo_qtd = col_s1.number_input("Nº Parcelas do Saldo", 1, 60, 12)
     primeiro_venc_saldo = col_s2.date_input("1º Vencimento Saldo", value=date.today() + timedelta(days=30))
-    saldo_forma = col_s3.selectbox("Forma Pagto Saldo", ["Boleto", "Cartão de Crédito Recorrente", "Cheque"])
+    
+    # Atualizado conforme solicitado: PIX e Cartão de Crédito (sem recorrente)
+    opcoes_saldo = ["Boleto", "Cartão de Crédito", "PIX", "Cheque"]
+    saldo_forma = col_s3.selectbox("Forma Pagto Saldo", opcoes_saldo)
 
-    # Simulação da Tabela de Parcelas
+    # Simulação da Tabela
     if saldo_restante > 0:
         valor_parcela_saldo = saldo_restante / saldo_qtd
         lista_parcelas = []
@@ -319,16 +329,14 @@ def tela_novo_contrato():
         with st.expander("🔎 Ver Detalhes das Parcelas do Saldo", expanded=False):
             st.dataframe(pd.DataFrame(lista_parcelas), use_container_width=True)
 
-    # --- BLOCO 4: CHECKBOXES E OPÇÕES ---
     st.markdown("---")
     col_check1, col_check2 = st.columns(2)
     is_bolsista = col_check1.radio("É Bolsista?", ["Não", "Sim"], horizontal=True)
     is_paciente = col_check2.radio("Atendimento a Paciente?", ["Não", "Sim"], horizontal=True)
 
-    # --- BLOCO 5: AÇÃO FINAL ---
+    # --- AÇÃO FINAL ---
     st.markdown("### 🚀 Finalização")
     
-    # Variável de controle para não resetar a tela ao clicar nos botões de ação
     if 'contrato_gerado' not in st.session_state:
         st.session_state['contrato_gerado'] = None
 
@@ -337,7 +345,6 @@ def tela_novo_contrato():
             st.error("Valores inconsistentes.")
         else:
             with st.spinner("Criando registro e gerando PDF..."):
-                # Prepara dados
                 dados_contrato = {
                     "aluno_id": aluno['id'],
                     "turma_id": turma_sel['id'],
@@ -345,10 +352,9 @@ def tela_novo_contrato():
                     "percentual_desconto": percentual,
                     "valor_desconto": valor_desconto,
                     "valor_final": valor_final,
-                    "valor_material": 0, # Ajustar regra se tiver
-                    "entrada_valor": entrada_val,
+                    "entrada_valor": entrada_val_total,
                     "entrada_qtd_parcelas": entrada_qtd,
-                    "entrada_forma_pagamento": entrada_forma,
+                    "entrada_detalhes": detalhes_entrada, # Passando a lista completa
                     "saldo_valor": saldo_restante,
                     "saldo_qtd_parcelas": saldo_qtd,
                     "saldo_forma_pagamento": saldo_forma,
@@ -357,22 +363,26 @@ def tela_novo_contrato():
                     "formato_curso": turma_sel['formato']
                 }
                 
-                # datas_vencimento simplificado para o PDF (passamos a lista da entrada e inicio do saldo)
+                # Contexto extra para o PDF
                 datas_info = {
-                    "datas_entrada": [d.strftime("%Y-%m-%d") for d in datas_entrada],
+                    "detalhes_entrada": detalhes_entrada, # Passa a lista rica para o service
                     "inicio_saldo": primeiro_venc_saldo.strftime("%Y-%m-%d")
                 }
                 
-                # Gera PDF
                 caminho_pdf = gerar_contrato_pdf(aluno, turma_sel, curso_sel, dados_contrato, datas_info)
                 
                 if caminho_pdf:
                     dados_contrato['caminho_arquivo'] = caminho_pdf
-                    # Salva no banco
-                    novo_contrato = create_contrato(dados_contrato)
+                    # Limpa a lista complexa antes de salvar no banco (Supabase não aceita lista de dict fácil sem JSONB)
+                    # Para simplificar, removemos a lista detalhada do insert do banco principal,
+                    # mas o PDF já foi gerado com ela.
+                    dados_contrato_banco = dados_contrato.copy()
+                    if 'entrada_detalhes' in dados_contrato_banco:
+                        del dados_contrato_banco['entrada_detalhes']
+
+                    novo_contrato = create_contrato(dados_contrato_banco)
                     
                     if novo_contrato:
-                        # Salva na sessão para exibir as opções abaixo sem perder estado
                         st.session_state['contrato_gerado'] = {
                             "token": novo_contrato['token_acesso'],
                             "email": aluno['email'],
@@ -381,56 +391,44 @@ def tela_novo_contrato():
                         }
                         st.balloons()
                         st.success("Contrato Gerado com Sucesso!")
-                        st.rerun() # Recarrega para mostrar o bloco abaixo
+                        st.rerun()
                 else:
                     st.error("Falha ao gerar PDF.")
 
-    # --- TELA DE SUCESSO E AÇÕES PÓS-GERAÇÃO ---
     if st.session_state['contrato_gerado']:
         info = st.session_state['contrato_gerado']
         link_unico = f"https://nexusmed-contratos.streamlit.app/?token={info['token']}"
         
         st.divider()
-        st.markdown("#### ✅ Contrato Pronto! O que deseja fazer?")
+        st.markdown("#### ✅ Contrato Pronto!")
         
         c_link, c_down, c_mail = st.columns([2, 1, 1])
-        
         with c_link:
-            st.text_input("🔗 Link para o Aluno (WhatsApp):", value=link_unico, read_only=True)
-            
+            st.text_input("🔗 Link para o Aluno:", value=link_unico, read_only=True)
         with c_down:
             try:
                 with open(info['path'], "rb") as pdf_file:
-                    st.download_button(
-                        label="📥 Baixar PDF",
-                        data=pdf_file,
-                        file_name=f"Contrato_{info['nome']}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True
-                    )
+                    st.download_button("📥 Baixar PDF", pdf_file, f"Contrato_{info['nome']}.pdf", "application/pdf", use_container_width=True)
             except:
-                st.warning("Arquivo PDF não localizado.")
-
+                st.warning("PDF não localizado.")
         with c_mail:
-            if st.button("📧 Enviar por E-mail", use_container_width=True):
+            if st.button("📧 Enviar E-mail", use_container_width=True):
                 with st.spinner("Enviando..."):
-                    sucesso = enviar_email(info['email'], info['nome'], link_unico)
-                    if sucesso:
+                    if enviar_email(info['email'], info['nome'], link_unico):
                         st.toast("E-mail enviado!", icon="📩")
                     else:
                         st.error("Erro no envio.")
         
-        if st.button("🔄 Iniciar Novo Contrato"):
+        if st.button("🔄 Iniciar Novo"):
             st.session_state['contrato_gerado'] = None
             st.rerun()
 
 def tela_aceite_aluno(token):
     st.set_page_config(page_title="Assinatura Digital", layout="centered")
-    
     contrato_data = get_contrato_by_token(token)
     
     if not contrato_data:
-        st.error("🚫 Link inválido ou expirado.")
+        st.error("🚫 Link inválido.")
         st.stop()
         
     contrato = contrato_data
@@ -446,33 +444,29 @@ def tela_aceite_aluno(token):
 
     st.title("Documento Pendente de Assinatura")
     st.markdown(f"Olá, **{aluno['nome_completo']}**.")
-    st.write("Por favor, revise os termos do contrato enviado para o seu e-mail e confirme abaixo.")
+    st.write("Revise os termos e assine abaixo.")
     
     st.divider()
-    st.subheader("✍️ Assinatura Digital")
     
     with st.form("form_aceite_digital"):
-        st.write("Para validar sua assinatura, confirme seus dados cadastrais:")
         col_a1, col_a2 = st.columns(2)
         nome_input = col_a1.text_input("Seu Nome Completo")
         cpf_input = col_a2.text_input("Seu CPF (apenas números)")
         
         check_termos = st.checkbox("Declaro que li o contrato e concordo com todas as cláusulas.")
         
-        btn_assinar = st.form_submit_button("✅ ASSINAR CONTRATO")
-        
-        if btn_assinar:
+        if st.form_submit_button("✅ ASSINAR CONTRATO"):
             cpf_real = aluno['cpf']
             cpf_digitado = ''.join(filter(str.isdigit, cpf_input))
             
             if cpf_digitado != cpf_real:
                 st.error("CPF incorreto.")
             elif nome_input.lower().strip() != aluno['nome_completo'].lower().strip():
-                st.warning("O nome digitado não confere exatamente com o cadastro.")
+                st.warning("Nome incorreto.")
             elif not check_termos:
-                st.error("Você precisa marcar a caixa concordando com os termos.")
+                st.error("Marque o aceite dos termos.")
             else:
-                with st.spinner("Registrando assinatura e carimbando..."):
+                with st.spinner("Assinando..."):
                     fuso = pytz.timezone('America/Sao_Paulo')
                     agora = datetime.now(fuso)
                     ip = "IP_CLIENTE"
@@ -485,12 +479,9 @@ def tela_aceite_aluno(token):
                     link_validacao = f"https://nexusmed-contratos.streamlit.app/?token={token}"
                     
                     texto_carimbo = f"""ACEITE DIGITAL REALIZADO
-Data/Hora: {agora.strftime('%d/%m/%Y às %H:%M:%S')} (GMT-3)
+Data: {agora.strftime('%d/%m/%Y %H:%M:%S')}
 Nome: {aluno['nome_completo']}
 CPF: {cpf_real}
-E-mail: {aluno['email']}
-IP: {ip}
-Link: {link_validacao}
 Hash: {hash_ass}"""
 
                     caminho_original = contrato['caminho_arquivo']
@@ -500,13 +491,10 @@ Hash: {hash_ass}"""
                         registrar_aceite(contrato['id'], {
                             "status": "assinado",
                             "data_aceite": agora.isoformat(),
-                            "ip_aceite": ip,
-                            "hash_aceite": hash_ass,
                             "recibo_aceite_texto": texto_carimbo,
                             "caminho_arquivo": novo_caminho
                         })
                         st.balloons()
-                        st.success("Contrato assinado com sucesso!")
-                        st.code(texto_carimbo, language="text")
+                        st.success("Assinado com sucesso!")
                     else:
-                        st.error("Erro técnico ao aplicar assinatura.")
+                        st.error("Erro ao assinar.")
