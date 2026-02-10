@@ -115,7 +115,7 @@ def tela_gestao_alunos():
     st.header("📇 Cadastro de Alunos")
     cpf_busca = st.text_input("🔍 Buscar por CPF", max_chars=14)
     
-    # CORREÇÃO CRÍTICA: ID ÚNICO PARA ESTE BOTÃO
+    # ID ÚNICO PARA ESTE BOTÃO
     if st.button("Buscar Aluno", key="btn_buscar_unico"):
          with st.spinner("Buscando..."):
              encontrado = get_aluno_by_cpf(cpf_busca)
@@ -143,7 +143,6 @@ def tela_gestao_alunos():
                 except: pass
             data_nasc = c6.date_input("Data Nascimento", value=val_nasc)
             
-            # Endereço
             st.markdown("---")
             e1, e2 = st.columns([3, 1])
             logradouro = e1.text_input("Logradouro", value=dados.get('logradouro', ''))
@@ -154,14 +153,12 @@ def tela_gestao_alunos():
             uf = e5.text_input("UF", value=dados.get('uf', ''))
             cep = st.text_input("CEP", value=dados.get('cep', ''))
             
-            # Profissional
             p1, p2 = st.columns(2)
             crm = p1.text_input("CRM", value=dados.get('crm', ''))
             area = p2.text_input("Área", value=dados.get('area_formacao', ''))
             
-            # Nacionalidade/Civil
             nac = st.text_input("Nacionalidade", value=dados.get('nacionalidade', 'Brasileira'))
-            ec = st.selectbox("Estado Civil", ["Solteiro(a)", "Casado(a)"], index=0) # Simplificado para exemplo
+            ec = st.selectbox("Estado Civil", ["Solteiro(a)", "Casado(a)", "Divorciado(a)"], index=0)
 
             if st.form_submit_button("💾 Salvar Aluno"):
                 payload = {
@@ -175,7 +172,7 @@ def tela_gestao_alunos():
                 time.sleep(1)
                 st.rerun()
 
-# --- TELA DE CONTRATOS (A VERSÃO CORRETA V6/V7) ---
+# --- TELA DE CONTRATOS ---
 def tela_novo_contrato():
     st.header("📝 Emissão de Contrato (Completo)")
 
@@ -217,7 +214,7 @@ def tela_novo_contrato():
     st.write("### 1. Entrada Detalhada")
     
     ce1, ce2 = st.columns(2)
-    # CALLBACKS AQUI GARANTEM O CÁLCULO
+    # CALLBACKS
     ent_total = ce1.number_input("Total Entrada (R$)", 0.0, v_final, 0.0, step=100.0, key="ent_total_input", on_change=resetar_parcelas)
     ent_qtd = ce2.number_input("Qtd Parcelas", 1, 12, 1, key="ent_qtd_input", on_change=resetar_parcelas)
     
@@ -254,13 +251,28 @@ def tela_novo_contrato():
     s_ini = cs2.date_input("1º Venc. Saldo", value=date.today() + relativedelta(months=1))
     s_forma = cs3.selectbox("Forma Saldo", ["Boleto", "Cartão", "PIX"])
     
-    # Checkboxes
+    # --- AQUI ESTAVA FALTANDO A TABELA DE SALDO! (Recuperada) ---
+    if saldo_rest > 0:
+        val_parc_saldo = saldo_rest / s_qtd
+        lista_saldo = []
+        for i in range(s_qtd):
+            dt_venc = s_ini + relativedelta(months=i)
+            lista_saldo.append({
+                "Parcela": f"{i+1}/{s_qtd}",
+                "Vencimento": dt_venc.strftime("%d/%m/%Y"),
+                "Valor": f"R$ {val_parc_saldo:,.2f}",
+                "Forma": s_forma
+            })
+        
+        with st.expander("🔎 Ver Detalhes do Saldo", expanded=False):
+            st.dataframe(pd.DataFrame(lista_saldo), use_container_width=True)
+    # ------------------------------------------------------------
+    
     st.divider()
     cc1, cc2 = st.columns(2)
     is_bolsista = cc1.radio("Bolsista?", ["Não", "Sim"], horizontal=True)
     is_paciente = cc2.radio("Atend. Paciente?", ["Não", "Sim"], horizontal=True)
     
-    # Finalização
     st.divider()
     if 'contrato_gerado' not in st.session_state: st.session_state['contrato_gerado'] = None
 
@@ -284,20 +296,16 @@ def tela_novo_contrato():
                 
                 path = gerar_contrato_pdf(aluno, turma_sel, curso_sel, dados, infos)
                 if path:
-                    # Limpa detalhes antes de salvar no banco
                     if 'entrada_detalhes' in dados: del dados['entrada_detalhes']
                     contrato = create_contrato(dados)
-                    
                     st.session_state['contrato_gerado'] = {
-                        "token": contrato['token_acesso'],
-                        "email": aluno['email'],
-                        "path": path,
-                        "nome": aluno['nome_completo']
+                        "token": contrato['token_acesso'], "email": aluno['email'],
+                        "path": path, "nome": aluno['nome_completo']
                     }
                     st.balloons()
                     st.rerun()
                 else:
-                    st.error("Erro PDF.")
+                    st.error("Erro PDF. Verifique o template.")
 
     if st.session_state['contrato_gerado']:
         info = st.session_state['contrato_gerado']
@@ -319,7 +327,6 @@ def tela_novo_contrato():
             st.rerun()
 
 def tela_aceite_aluno(token):
-    # (Mantém a mesma lógica de aceite já existente)
     st.set_page_config(page_title="Assinatura", layout="centered")
     data = get_contrato_by_token(token)
     if not data:
@@ -335,9 +342,7 @@ def tela_aceite_aluno(token):
         cpf = st.text_input("Confirme seu CPF")
         chk = st.checkbox("Li e concordo.")
         if st.form_submit_button("Assinar"):
-            # Lógica simples de validação e carimbo
             if cpf == data['alunos']['cpf'] and chk:
-                 # ... chamar aplicar_carimbo ...
                  registrar_aceite(data['id'], {"status": "assinado", "data_aceite": datetime.now().isoformat()})
                  st.success("Assinado!")
             else:
