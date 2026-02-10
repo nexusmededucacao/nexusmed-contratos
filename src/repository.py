@@ -12,6 +12,7 @@ def get_cursos():
 
 def create_curso(dados):
     try:
+        # Removemos o .select() para evitar erro de versão
         return supabase.table("cursos").insert(dados).execute()
     except Exception as e:
         st.error(f"Erro ao criar curso: {e}")
@@ -33,7 +34,7 @@ def create_turma(dados):
         st.error(f"Erro ao criar turma: {e}")
         return None
 
-# --- ALUNOS (Onde o bicho pega) ---
+# --- ALUNOS (Correção Principal Aqui) ---
 def get_aluno_by_cpf(cpf):
     try:
         if not cpf: return None
@@ -51,40 +52,41 @@ def get_aluno_by_cpf(cpf):
 
 def upsert_aluno(dados):
     """
-    Esta função agora vai jogar o erro na tela se falhar.
+    Salva o aluno e busca os dados atualizados em duas etapas separadas
+    para evitar o erro 'SyncQueryRequestBuilder has no attribute select'
     """
     try:
-        # Garante CPF limpo e string
+        # 1. Limpeza de dados
         if 'cpf' in dados:
             dados['cpf'] = ''.join(filter(str.isdigit, str(dados['cpf'])))
         
-        # Garante que campos de data vazios não vão como string vazia ""
-        # O Postgres odeia data vazia "". Tem que ser None.
         if 'data_nascimento' in dados and not dados['data_nascimento']:
              dados['data_nascimento'] = None
 
-        # Tenta salvar
-        response = supabase.table("alunos").upsert(dados, on_conflict="cpf").select().execute()
+        # 2. A CORREÇÃO: Executa o salvamento SEM .select()
+        # Isso evita o erro técnico da biblioteca
+        supabase.table("alunos").upsert(dados, on_conflict="cpf").execute()
         
-        # Se voltou vazio, mostra o objeto de resposta para entendermos o porquê
-        if not response.data:
-            st.error(f"⚠️ O Supabase recusou salvar e não deu erro explícito. Resposta técnica: {response}")
-            return None
-            
-        return response.data[0]
+        # 3. Busca Manual: Já que salvamos, agora buscamos o registro salvo
+        # para garantir que temos o ID correto.
+        return get_aluno_by_cpf(dados['cpf'])
 
     except Exception as e:
-        # AQUI É O PULO DO GATO: Mostra o erro exato na interface
-        st.error(f"❌ ERRO TÉCNICO NO BANCO: {e}")
+        st.error(f"❌ ERRO TÉCNICO AO SALVAR: {e}")
         return None
 
 # --- CONTRATOS ---
 def create_contrato(dados):
     try:
-        response = supabase.table("contratos").insert(dados).select().execute()
-        if response.data:
-            return response.data[0]
+        # A mesma correção aqui: Inserimos sem .select()
+        supabase.table("contratos").insert(dados).execute()
+        
+        # Buscamos usando o token que acabamos de gerar (que é único)
+        token = dados.get('token_acesso')
+        if token:
+             return get_contrato_by_token(token)
         return None
+        
     except Exception as e:
         st.error(f"Erro ao criar contrato: {e}")
         return None
