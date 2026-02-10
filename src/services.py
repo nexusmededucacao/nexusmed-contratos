@@ -3,7 +3,6 @@ import os
 import io
 import smtplib
 import subprocess
-from pathlib import Path
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 from docxtpl import DocxTemplate
@@ -14,68 +13,58 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from src.db import supabase
 
-# --- IMPORTS PARA RECRIAR O WORD (AUTO-FIX) ---
+# --- MÓDULO DE CRIAÇÃO DO TEMPLATE (EMBUTIDO) ---
 from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# --- FUNÇÃO DE AUTO-REPARO DO TEMPLATE ---
-def restaurar_template_padrao():
-    """Cria um novo template_contrato.docx se ele estiver faltando ou corrompido"""
-    caminho = "assets/modelo_contrato_V2.docx"
+def criar_template_temporario():
+    """
+    Cria um arquivo .docx limpo na pasta temporária do servidor.
+    Isso evita erros de sintaxe XML causados por edições manuais no Word.
+    """
+    caminho_temp = "/tmp/template_limpo.docx"
     
-    # Garante pasta assets
-    if not os.path.exists("assets"):
-        os.makedirs("assets")
-
     doc = Document()
-    
-    # Estilos
     style = doc.styles['Normal']
     font = style.font
     font.name = 'Arial'
-    font.size = Pt(11)
+    font.size = Pt(10)
 
-    # Conteúdo
+    # Cabeçalho
     h = doc.add_heading('CONTRATO DE PRESTAÇÃO DE SERVIÇOS', 0)
     h.alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph('')
 
+    # Dados
     p = doc.add_paragraph()
     p.add_run('CONTRATANTE: ').bold = True
-    p.add_run('{{ nome_aluno }}')
+    p.add_run('{{ nome_aluno }} (CPF: {{ cpf_aluno }}), residente em {{ endereco_aluno }} - {{ cidade_aluno }}.')
     
-    p = doc.add_paragraph()
-    p.add_run('CPF: ').bold = True
-    p.add_run('{{ cpf_aluno }}  ')
-    p.add_run('RG: ').bold = True
-    p.add_run('{{ rg_aluno }}')
-    
-    p = doc.add_paragraph()
-    p.add_run('ENDEREÇO: ').bold = True
-    p.add_run('{{ endereco_aluno }} - {{ cidade_aluno }} (CEP: {{ cep_aluno }})')
-
-    doc.add_paragraph('')
-
     p = doc.add_paragraph()
     p.add_run('OBJETO: ').bold = True
     p.add_run('Curso de Pós-Graduação em {{ nome_curso }} (Turma: {{ turma }}).')
-    
+
+    # Financeiro Resumo
     doc.add_heading('Condições Financeiras', level=1)
-    
-    # Tabela Entrada
-    doc.add_heading('1. Entrada Detalhada', level=2)
+    p = doc.add_paragraph()
+    p.add_run('Valor Total: {{ valor_bruto }} | Desconto: {{ desconto_perc }} | ').bold = False
+    p.add_run('Final: {{ valor_final }}').bold = True
+
+    # --- TABELA 1: ENTRADA ---
+    doc.add_heading('1. Detalhamento da Entrada', level=2)
     table = doc.add_table(rows=2, cols=4)
     table.style = 'Table Grid'
     
-    # Cabeçalho
+    # Cabeçalho da Tabela
     hdr = table.rows[0].cells
-    hdr[0].text = 'Parc.'
+    hdr[0].text = 'Parc'
     hdr[1].text = 'Vencimento'
     hdr[2].text = 'Valor'
     hdr[3].text = 'Forma'
     
-    # Linha Loop (CORRIGIDA)
+    # Linha de Dados (Onde estava o erro)
+    # AQUI O CÓDIGO É PURO, SEM SUJEIRA DO WORD
     row = table.rows[1].cells
     row[0].paragraphs[0].add_run('{% tr for item in tbl_entrada %}{{ item.numero }}')
     row[1].text = '{{ item.data_vencimento }}'
@@ -84,13 +73,13 @@ def restaurar_template_padrao():
 
     doc.add_paragraph('')
 
-    # Tabela Saldo
-    doc.add_heading('2. Saldo Restante', level=2)
+    # --- TABELA 2: SALDO ---
+    doc.add_heading('2. Detalhamento do Saldo', level=2)
     table2 = doc.add_table(rows=2, cols=4)
     table2.style = 'Table Grid'
     
     hdr2 = table2.rows[0].cells
-    hdr2[0].text = 'Parc.'
+    hdr2[0].text = 'Parc'
     hdr2[1].text = 'Vencimento'
     hdr2[2].text = 'Valor'
     hdr2[3].text = 'Forma'
@@ -101,14 +90,15 @@ def restaurar_template_padrao():
     row2[2].text = '{{ item.valor }}'
     row2[3].paragraphs[0].add_run('{{ item.forma_pagamento }}{% tr endfor %}')
 
+    # Assinaturas
     doc.add_paragraph('')
-    doc.add_paragraph('___________________________________________').alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_paragraph('_______________________________').alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph('{{ nome_aluno }}').alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    doc.save(caminho)
-    return caminho
+    doc.save(caminho_temp)
+    return caminho_temp
 
-# --- FUNÇÕES AUXILIARES ---
+# --- FUNÇÕES DE FORMATAÇÃO ---
 
 def format_moeda(valor):
     if valor is None: return "R$ 0,00"
@@ -152,10 +142,14 @@ def gerar_parcelas_saldo(valor_total, qtd, data_ini_str, forma):
 def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
     hoje = datetime.now()
 
-    # 1. AUTO-CORREÇÃO: Recria o template sempre que chamar, para garantir que está limpo
-    template_path = restaurar_template_padrao()
+    # 1. GERA O TEMPLATE LIMPO NA HORA (Adeus erro de tag!)
+    try:
+        template_path = criar_template_temporario()
+    except Exception as e:
+        st.error(f"Erro ao criar template temporário: {e}")
+        return None
 
-    # 2. Dados da Entrada
+    # 2. Prepara Dados Entrada
     tbl_entrada = []
     detalhes_entrada = datas_info.get('detalhes_entrada', [])
     
@@ -177,7 +171,7 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
                 "forma_pagamento": contrato['entrada_forma_pagamento']
             })
 
-    # 3. Dados do Saldo
+    # 3. Prepara Dados Saldo
     tbl_saldo = gerar_parcelas_saldo(
         float(contrato['saldo_valor']), 
         int(contrato['saldo_qtd_parcelas']), 
@@ -189,31 +183,20 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
     context = {
         "nome_aluno": aluno['nome_completo'].upper(),
         "cpf_aluno": aluno['cpf'],
-        "rg_aluno": aluno.get('rg', ''),
-        "email_aluno": aluno['email'],
-        "telefone_aluno": aluno.get('telefone', ''),
         "endereco_aluno": f"{aluno.get('logradouro','')}, {aluno.get('numero','')}",
         "cidade_aluno": f"{aluno.get('cidade','')} - {aluno.get('uf','')}",
         "cep_aluno": aluno.get('cep', ''),
         "nome_curso": curso['nome'],
         "turma": turma['codigo_turma'],
-        "carga_horaria": str(curso.get('carga_horaria', '')),
-        "data_inicio": format_data(turma.get('data_inicio')),
-        "data_fim": format_data(turma.get('data_fim')),
         "valor_bruto": format_moeda(contrato['valor_curso']),
         "desconto_perc": f"{contrato['percentual_desconto']}%",
-        "valor_desconto": format_moeda(contrato['valor_desconto']),
         "valor_final": format_moeda(contrato['valor_final']),
-        "entrada_total": format_moeda(contrato['entrada_valor']),
         "tbl_entrada": tbl_entrada,
-        "saldo_total": format_moeda(contrato['saldo_valor']),
-        "saldo_qtd": str(contrato['saldo_qtd_parcelas']),
-        "tbl_saldo": tbl_saldo,
-        "data_hoje": hoje.strftime("%d/%m/%Y")
+        "tbl_saldo": tbl_saldo
     }
 
     try:
-        # 5. Renderizar
+        # 5. Renderiza
         doc = DocxTemplate(template_path)
         doc.render(context)
         
@@ -223,14 +206,16 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
         
         doc.save(docx_path)
         
-        # Converter PDF
+        # Converte para PDF (LibreOffice)
         cmd = ["soffice", "--headless", "--convert-to", "pdf", "--outdir", "/tmp", docx_path]
         subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
+        # Define arquivo final (PDF ou DOCX se falhar conversão)
         final_path = pdf_path if os.path.exists(pdf_path) else docx_path
         mime_type = "application/pdf" if os.path.exists(pdf_path) else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         ext = ".pdf" if os.path.exists(pdf_path) else ".docx"
         
+        # Upload
         storage_path = f"{hoje.year}/{hoje.month}/{filename}{ext}"
         with open(final_path, "rb") as f:
             supabase.storage.from_("contratos").upload(
@@ -240,42 +225,35 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
         return storage_path
 
     except Exception as e:
-        st.error(f"Erro ao processar: {e}")
+        st.error(f"Erro ao processar documento: {e}")
         return None
 
-# --- ASSINATURA E E-MAIL ---
+# --- CARIMBO E EMAIL ---
 
 def aplicar_carimbo_digital(path_original, texto_carimbo):
     if path_original.endswith(".docx"): return path_original
-    
     try:
         data = supabase.storage.from_("contratos").download(path_original)
         pdf_reader = PdfReader(io.BytesIO(data))
         pdf_writer = PdfWriter()
-        
         packet = io.BytesIO()
         c = canvas.Canvas(packet, pagesize=letter)
         c.setFont("Helvetica", 8)
         c.setFillColorRGB(0.5, 0.5, 0.5, 0.5)
-        
         y = 40
         for linha in texto_carimbo.split('\n'):
             c.drawString(20, y, linha.strip())
             y -= 10
         c.save()
         packet.seek(0)
-        
         stamp_reader = PdfReader(packet)
         stamp_page = stamp_reader.pages[0]
-        
         for page in pdf_reader.pages:
             page.merge_page(stamp_page)
             pdf_writer.add_page(page)
-            
         output = io.BytesIO()
         pdf_writer.write(output)
         output.seek(0)
-        
         new_path = path_original.replace(".pdf", "_assinado.pdf")
         supabase.storage.from_("contratos").upload(new_path, output, {"content-type": "application/pdf", "upsert": "true"})
         return new_path
@@ -288,11 +266,8 @@ def enviar_email(destinatario, nome, link):
         msg = MIMEMultipart()
         msg['From'] = st.secrets["GMAIL_EMAIL"]
         msg['To'] = destinatario
-        msg['Subject'] = "Contrato NexusMed - Assinatura Pendente"
-        
-        html = f"""<p>Olá, {nome}. <a href="{link}">Clique aqui para assinar</a></p>"""
-        msg.attach(MIMEText(html, 'html'))
-        
+        msg['Subject'] = "Assinatura Pendente - NexusMed"
+        msg.attach(MIMEText(f"Olá {nome}, assine aqui: {link}", 'html'))
         server = smtplib.SMTP("smtp.gmail.com", 587)
         server.starttls()
         server.login(st.secrets["GMAIL_EMAIL"], st.secrets["GMAIL_PASSWORD"])
