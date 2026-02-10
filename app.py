@@ -1,25 +1,22 @@
 import streamlit as st
-from src.ui import tela_admin_geracao, tela_aluno_aceite
+from src.auth import criar_admin_inicial
+from src.ui import *
 
-# Configuração deve ser a primeira linha do app.py
-# Mas como a tela de aluno tem config própria, vamos gerenciar aqui ou remover do ui.py
-# Vamos deixar uma config genérica aqui
-st.set_page_config(page_title="Portal NexusMed", layout="wide")
+st.set_page_config(layout="wide")
 
-def main():
-    # Verifica parâmetros da URL
-    # Sintaxe nova do Streamlit (versões recentes)
-    query_params = st.query_params
-    
-    token = query_params.get("token", None)
+# Rota Pública (Aceite)
+if "token" in st.query_params:
+    tela_aceite_aluno(st.query_params["token"])
+    st.stop()
 
-    if token:
-        # Modo Aluno (Tela Limpa)
-        tela_aluno_aceite(token)
-    else:
-        # Modo Admin (Dashboard)
-        # Aqui você poderia adicionar um login simples (st.text_input senha) para proteger essa tela
-        tela_admin_geracao()
+# Rota Privada (Sistema)
+criar_admin_inicial() # Garante que existe admin
 
-if __name__ == "__main__":
-    main()
+if 'usuario' not in st.session_state or not st.session_state['usuario']:
+    render_login()
+else:
+    opcao = render_sidebar()
+    if opcao == "Gerar Contrato": tela_novo_contrato()
+    elif opcao == "Gestão de Alunos": tela_gestao_alunos()
+    elif opcao == "Gestão de Cursos": tela_gestao_cursos()
+    # Adicionar Gestão Usuários aqui
