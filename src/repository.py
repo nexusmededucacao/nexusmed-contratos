@@ -7,21 +7,14 @@ def get_cursos():
         response = supabase.table("cursos").select("*").order("nome").execute()
         return response.data if response.data else []
     except Exception as e:
-        print(f"Erro ao buscar cursos: {e}")
+        st.error(f"Erro ao buscar cursos: {e}")
         return []
 
 def create_curso(dados):
     try:
         return supabase.table("cursos").insert(dados).execute()
     except Exception as e:
-        print(f"Erro ao criar curso: {e}")
-        return None
-
-def update_curso(id, dados):
-    try:
-        return supabase.table("cursos").update(dados).eq("id", id).execute()
-    except Exception as e:
-        print(f"Erro ao atualizar curso: {e}")
+        st.error(f"Erro ao criar curso: {e}")
         return None
 
 # --- TURMAS ---
@@ -30,32 +23,22 @@ def get_turmas_by_curso(curso_id):
         response = supabase.table("turmas").select("*").eq("curso_id", curso_id).execute()
         return response.data if response.data else []
     except Exception as e:
-        print(f"Erro ao buscar turmas: {e}")
+        st.error(f"Erro ao buscar turmas: {e}")
         return []
 
 def create_turma(dados):
     try:
         return supabase.table("turmas").insert(dados).execute()
     except Exception as e:
-        print(f"Erro ao criar turma: {e}")
+        st.error(f"Erro ao criar turma: {e}")
         return None
 
-def update_turma(id, dados):
-    try:
-        return supabase.table("turmas").update(dados).eq("id", id).execute()
-    except Exception as e:
-        print(f"Erro ao atualizar turma: {e}")
-        return None
-
-# --- ALUNOS (Busca Segura) ---
+# --- ALUNOS (Onde o bicho pega) ---
 def get_aluno_by_cpf(cpf):
     try:
         if not cpf: return None
-        # Limpa o CPF
         cpf_limpo = ''.join(filter(str.isdigit, str(cpf)))
         
-        # AQUI ESTAVA O ERRO: Removemos o maybe_single()
-        # Buscamos uma lista normal. Se tiver algo, retornamos o índice [0]
         response = supabase.table("alunos").select("*").eq("cpf", cpf_limpo).execute()
         
         if response.data and len(response.data) > 0:
@@ -63,40 +46,51 @@ def get_aluno_by_cpf(cpf):
         else:
             return None
     except Exception as e:
-        print(f"Erro ao buscar aluno por CPF: {e}")
+        st.error(f"Erro ao buscar CPF: {e}")
         return None
 
 def upsert_aluno(dados):
+    """
+    Esta função agora vai jogar o erro na tela se falhar.
+    """
     try:
-        # Garante CPF limpo
+        # Garante CPF limpo e string
         if 'cpf' in dados:
             dados['cpf'] = ''.join(filter(str.isdigit, str(dados['cpf'])))
         
-        # on_conflict="cpf" faz o UPDATE se já existir, ou INSERT se não
+        # Garante que campos de data vazios não vão como string vazia ""
+        # O Postgres odeia data vazia "". Tem que ser None.
+        if 'data_nascimento' in dados and not dados['data_nascimento']:
+             dados['data_nascimento'] = None
+
+        # Tenta salvar
         response = supabase.table("alunos").upsert(dados, on_conflict="cpf").select().execute()
         
-        if response.data and len(response.data) > 0:
-            return response.data[0]
-        return None
+        # Se voltou vazio, mostra o objeto de resposta para entendermos o porquê
+        if not response.data:
+            st.error(f"⚠️ O Supabase recusou salvar e não deu erro explícito. Resposta técnica: {response}")
+            return None
+            
+        return response.data[0]
+
     except Exception as e:
-        print(f"Erro ao salvar aluno: {e}")
+        # AQUI É O PULO DO GATO: Mostra o erro exato na interface
+        st.error(f"❌ ERRO TÉCNICO NO BANCO: {e}")
         return None
 
 # --- CONTRATOS ---
 def create_contrato(dados):
     try:
         response = supabase.table("contratos").insert(dados).select().execute()
-        if response.data and len(response.data) > 0:
+        if response.data:
             return response.data[0]
         return None
     except Exception as e:
-        print(f"Erro ao criar contrato: {e}")
+        st.error(f"Erro ao criar contrato: {e}")
         return None
 
 def get_contrato_by_token(token):
     try:
-        # Traz contrato + dados do aluno (join) + dados da turma (join)
-        # Nota: Removemos o maybe_single() aqui também por segurança
         response = supabase.table("contratos")\
             .select("*, alunos:aluno_id(*), turmas:turma_id(*, cursos(*))")\
             .eq("token_acesso", token)\
@@ -106,28 +100,12 @@ def get_contrato_by_token(token):
             return response.data[0]
         return None
     except Exception as e:
-        print(f"Erro ao buscar contrato pelo token: {e}")
+        st.error(f"Erro ao buscar contrato: {e}")
         return None
 
 def registrar_aceite(contrato_id, dados_update):
     try:
         return supabase.table("contratos").update(dados_update).eq("id", contrato_id).execute()
     except Exception as e:
-        print(f"Erro ao registrar aceite: {e}")
-        return None
-
-# --- USUÁRIOS ---
-def get_all_usuarios():
-    try:
-        response = supabase.table("usuarios").select("*").order("nome").execute()
-        return response.data if response.data else []
-    except Exception as e:
-        print(f"Erro ao buscar usuários: {e}")
-        return []
-
-def create_usuario(dados):
-    try:
-        return supabase.table("usuarios").insert(dados).execute()
-    except Exception as e:
-        print(f"Erro ao criar usuário: {e}")
+        st.error(f"Erro no aceite: {e}")
         return None
