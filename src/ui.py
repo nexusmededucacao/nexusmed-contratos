@@ -115,7 +115,6 @@ def tela_gestao_alunos():
     st.header("📇 Cadastro de Alunos")
     cpf_busca = st.text_input("🔍 Buscar por CPF", max_chars=14)
     
-    # ID ÚNICO PARA ESTE BOTÃO
     if st.button("Buscar Aluno", key="btn_buscar_unico"):
          with st.spinner("Buscando..."):
              encontrado = get_aluno_by_cpf(cpf_busca)
@@ -229,7 +228,6 @@ def tela_novo_contrato():
             
             c_p1, c_p2, c_p3 = st.columns([1.5, 1.5, 2])
             with c_p1:
-                # 1ª Parcela tem Callback Cascata
                 if i == 0:
                     vlr = st.number_input(f"Valor {i+1}", step=10.0, key=k_val, on_change=calcular_cascata)
                 else:
@@ -251,7 +249,6 @@ def tela_novo_contrato():
     s_ini = cs2.date_input("1º Venc. Saldo", value=date.today() + relativedelta(months=1))
     s_forma = cs3.selectbox("Forma Saldo", ["Boleto", "Cartão", "PIX"])
     
-    # --- AQUI ESTAVA FALTANDO A TABELA DE SALDO! (Recuperada) ---
     if saldo_rest > 0:
         val_parc_saldo = saldo_rest / s_qtd
         lista_saldo = []
@@ -263,10 +260,8 @@ def tela_novo_contrato():
                 "Valor": f"R$ {val_parc_saldo:,.2f}",
                 "Forma": s_forma
             })
-        
         with st.expander("🔎 Ver Detalhes do Saldo", expanded=False):
             st.dataframe(pd.DataFrame(lista_saldo), use_container_width=True)
-    # ------------------------------------------------------------
     
     st.divider()
     cc1, cc2 = st.columns(2)
@@ -290,6 +285,7 @@ def tela_novo_contrato():
                     "saldo_forma_pagamento": s_forma,
                     "bolsista": True if is_bolsista=="Sim" else False,
                     "atendimento_paciente": True if is_paciente=="Sim" else False,
+                    # AGORA ESTÁ ATIVO, POIS VOCÊ CRIOU A COLUNA NO SQL
                     "formato_curso": turma_sel['formato']
                 }
                 infos = {"detalhes_entrada": detalhes_entrada, "inicio_saldo": s_ini.strftime("%Y-%m-%d")}
@@ -297,15 +293,22 @@ def tela_novo_contrato():
                 path = gerar_contrato_pdf(aluno, turma_sel, curso_sel, dados, infos)
                 if path:
                     if 'entrada_detalhes' in dados: del dados['entrada_detalhes']
+                    
+                    # Salva no banco
                     contrato = create_contrato(dados)
-                    st.session_state['contrato_gerado'] = {
-                        "token": contrato['token_acesso'], "email": aluno['email'],
-                        "path": path, "nome": aluno['nome_completo']
-                    }
-                    st.balloons()
-                    st.rerun()
+                    
+                    # PROTEÇÃO CONTRA ERRO: Verifica se salvou antes de ler
+                    if contrato and 'token_acesso' in contrato:
+                        st.session_state['contrato_gerado'] = {
+                            "token": contrato['token_acesso'], "email": aluno['email'],
+                            "path": path, "nome": aluno['nome_completo']
+                        }
+                        st.balloons()
+                        st.rerun()
+                    else:
+                        st.error("Erro ao salvar no banco. Verifique se a coluna 'formato_curso' foi criada no SQL.")
                 else:
-                    st.error("Erro PDF. Verifique o template.")
+                    st.error("Erro ao gerar PDF.")
 
     if st.session_state['contrato_gerado']:
         info = st.session_state['contrato_gerado']
