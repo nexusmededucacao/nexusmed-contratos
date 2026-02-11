@@ -3,13 +3,21 @@ import uuid
 import pandas as pd
 from datetime import date
 from dateutil.relativedelta import relativedelta
-from src.repository import get_cursos, get_turmas_by_curso, get_aluno_by_cpf, create_contrato
-from src.services import gerar_contrato_pdf, enviar_email
 
-# --- CONFIG DA PÁGINA ---
+# --- CONFIG DA PÁGINA (Deve ser a primeira linha) ---
 st.set_page_config(page_title="Gerar Contrato", layout="wide")
 
-# --- SEGURANÇA ---
+# --- DEBUG DE IMPORTAÇÃO (MODO DE SEGURANÇA) ---
+try:
+    from src.repository import get_cursos, get_turmas_by_curso, get_aluno_by_cpf, create_contrato
+    from src.services import gerar_contrato_pdf, enviar_email
+except Exception as e:
+    st.error("🚨 ERRO CRÍTICO NOS IMPORTS!")
+    st.error(f"Detalhes do erro: {e}")
+    st.warning("Verifique se os arquivos em 'src/' estão corretos e sem erros de sintaxe.")
+    st.stop() # Para a execução aqui se der erro
+
+# --- SEGURANÇA DE LOGIN ---
 if 'usuario' not in st.session_state or not st.session_state['usuario']:
     st.switch_page("app.py")
 
