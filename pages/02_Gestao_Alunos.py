@@ -1,4 +1,6 @@
 import streamlit as st
+import time
+from datetime import date, datetime
 from src.database.repo_alunos import AlunoRepository
 from src.utils.formatters import format_cpf, format_phone
 
@@ -7,102 +9,201 @@ if not st.session_state.get("authenticated"):
     st.error("Por favor, faça login para acessar esta página.")
     st.stop()
 
+# Listas Auxiliares
+LISTA_ESTADOS = ["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"]
+LISTA_ESTADO_CIVIL = ["Solteiro(a)", "Casado(a)", "Divorciado(a)", "Viúvo(a)", "União Estável"]
+
 def main():
     st.title("👤 Gestão de Alunos")
     
     tab_listar, tab_cadastrar = st.tabs(["Lista de Alunos", "Cadastrar Novo Aluno"])
 
-    # --- ABA: LISTA DE ALUNOS ---
+    # --- ABA 1: LISTA E EDIÇÃO ---
     with tab_listar:
-        busca = st.text_input("Buscar aluno por nome", placeholder="Digite o nome para filtrar...")
+        col_search1, col_search2 = st.columns([4, 1])
+        termo_busca = col_search1.text_input("Buscar Aluno", placeholder="Digite Nome ou CPF (apenas números)")
         
-        if busca:
-            alunos = AlunoRepository.filtrar_por_nome(busca)
+        # Lógica de Busca Híbrida
+        if col_search2.button("🔍 Buscar"):
+            if termo_busca.isdigit():
+                alunos = AlunoRepository.buscar_por_cpf(termo_busca) # Busca Exata
+            else:
+                alunos = AlunoRepository.filtrar_por_nome(termo_busca) # Busca Parcial
         else:
             alunos = AlunoRepository.listar_todos()
 
         if alunos:
+            st.caption(f"Encontrados: {len(alunos)} registros.")
             for aluno in alunos:
-                with st.expander(f"{aluno['nome_completo']} (CPF: {format_cpf(aluno['cpf'])})"):
-                    col1, col2, col3 = st.columns(3)
-                    col1.write(f"**Email:** {aluno['email']}")
-                    col2.write(f"**Telefone:** {format_phone(aluno.get('telefone', ''))}")
-                    col3.write(f"**CRM:** {aluno.get('crm', 'N/A')}")
+                # Cabeçalho do Card
+                titulo = f"{aluno['nome_completo']} - CPF: {format_cpf(aluno['cpf'])}"
+                
+                with st.expander(titulo):
+                    # Visualização Rápida
+                    c1, c2, c3 = st.columns(3)
+                    c1.write(f"**Email:** {aluno.get('email', '-')}")
+                    c2.write(f"**Tel:** {format_phone(aluno.get('telefone', ''))}")
+                    c3.write(f"**Cidade:** {aluno.get('cidade')}/{aluno.get('uf')}")
                     
-                    st.write("**Endereço:**")
-                    st.write(f"{aluno.get('logradouro')}, {aluno.get('numero')} - {aluno.get('bairro')}")
-                    st.write(f"{aluno.get('cidade')} / {aluno.get('uf')} - CEP: {aluno.get('cep')}")
-                    
-                    if st.button("Editar Dados", key=f"edit_{aluno['id']}"):
-                        st.info("Funcionalidade de edição em desenvolvimento.")
+                    st.divider()
+
+                    # --- FORMULÁRIO DE EDIÇÃO (Pop-over) ---
+                    with st.popover("✏️ Editar Cadastro Completo"):
+                        st.write(f"Editando: **{aluno['nome_completo']}**")
+                        
+                        with st.form(key=f"edit_aluno_{aluno['id']}"):
+                            # 1. Dados Pessoais
+                            st.caption("Dados Pessoais")
+                            e_nome = st.text_input("Nome Completo", value=aluno['nome_completo'])
+                            
+                            ec1, ec2 = st.columns(2)
+                            # Tratamento de data para não quebrar se for None
+                            dt_val = datetime.fromisoformat(aluno['data_nascimento']).date() if aluno.get('data_nascimento') else None
+                            e_nasc = ec1.date_input("Nascimento", value=dt_val, min_value=date(1940, 1, 1), max_value=date.today())
+                            e_nac = ec2.text_input("Nacionalidade", value=aluno.get('nacionalidade', 'Brasileira'))
+                            
+                            ec3, ec4 = st.columns(2)
+                            # Indexação segura para dropdowns
+                            idx_civil = LISTA_ESTADO_CIVIL.index(aluno['estado_civil']) if aluno.get('estado_civil') in LISTA_ESTADO_CIVIL else 0
+                            e_civil = ec3.selectbox("Estado Civil", LISTA_ESTADO_CIVIL, index=idx_civil)
+                            e_tel = ec4.text_input("Telefone", value=aluno.get('telefone', ''))
+                            
+                            e_email = st.text_input("Email", value=aluno.get('email', ''))
+
+                            # 2. Endereço
+                            st.caption("Endereço")
+                            e_cep = st.text_input("CEP", value=aluno.get('cep', ''))
+                            el1, el2 = st.columns([3, 1])
+                            e_log = el1.text_input("Logradouro", value=aluno.get('logradouro', ''))
+                            e_num = el2.text_input("Número", value=aluno.get('numero', ''))
+                            e_comp = st.text_input("Complemento", value=aluno.get('complemento', ''))
+                            
+                            el3, el4, el5 = st.columns([2, 2, 1])
+                            e_bairro = el3.text_input("Bairro", value=aluno.get('bairro', ''))
+                            e_cidade = el4.text_input("Cidade", value=aluno.get('cidade', ''))
+                            idx_uf = LISTA_ESTADOS.index(aluno['uf']) if aluno.get('uf') in LISTA_ESTADOS else 0
+                            e_uf = el5.selectbox("UF", LISTA_ESTADOS, index=idx_uf)
+
+                            # 3. Profissional
+                            st.caption("Profissional")
+                            ep1, ep2 = st.columns(2)
+                            e_crm = ep1.text_input("CRM", value=aluno.get('crm', ''))
+                            e_area = ep2.text_input("Área Formação", value=aluno.get('area_formacao', ''))
+
+                            if st.form_submit_button("💾 Salvar Alterações"):
+                                dados_update = {
+                                    "nome_completo": e_nome,
+                                    "data_nascimento": e_nasc.isoformat() if e_nasc else None,
+                                    "nacionalidade": e_nac,
+                                    "estado_civil": e_civil,
+                                    "telefone": e_tel,
+                                    "email": e_email,
+                                    "cep": e_cep,
+                                    "logradouro": e_log,
+                                    "numero": e_num,
+                                    "complemento": e_comp,
+                                    "bairro": e_bairro,
+                                    "cidade": e_cidade,
+                                    "uf": e_uf,
+                                    "crm": e_crm,
+                                    "area_formacao": e_area
+                                }
+                                AlunoRepository.atualizar_aluno(aluno['id'], dados_update)
+                                st.success("Cadastro atualizado!")
+                                time.sleep(1.5)
+                                st.rerun()
         else:
             st.info("Nenhum aluno encontrado.")
 
-    # --- ABA: CADASTRAR ALUNO ---
+    # --- ABA 2: CADASTRAR NOVO ALUNO ---
     with tab_cadastrar:
-        with st.form("form_novo_aluno", clear_on_submit=True):
-            st.subheader("Informações Pessoais")
-            nome = st.text_input("Nome Completo *")
+        st.subheader("Cadastro de Novo Aluno")
+        
+        # 1. Validação Inicial de CPF (Regra de Negócio)
+        cpf_input = st.text_input("Informe o CPF para iniciar (Somente Números)", max_chars=14)
+        
+        if cpf_input:
+            # Verifica duplicidade
+            existe = AlunoRepository.buscar_por_cpf(cpf_input)
             
-            col1, col2, col3 = st.columns(3)
-            cpf = col1.text_input("CPF (apenas números) *")
-            rg = col2.text_input("RG")
-            nascimento = col3.date_input("Data de Nascimento", value=None)
-            
-            col1, col2 = st.columns(2)
-            email = col1.text_input("E-mail *")
-            telefone = col2.text_input("Telefone (com DDD)")
-
-            st.write("---")
-            st.subheader("Endereço")
-            cep = st.text_input("CEP")
-            
-            col_rua, col_num = st.columns([3, 1])
-            rua = col_rua.text_input("Logradouro")
-            num = col_num.text_input("Nº")
-            
-            col1, col2, col3 = st.columns([1, 1, 1])
-            bairro = col1.text_input("Bairro")
-            cidade = col2.text_input("Cidade")
-            uf = col3.selectbox("UF", ["", "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"])
-
-            st.write("---")
-            st.subheader("Dados Profissionais")
-            col1, col2 = st.columns(2)
-            crm = col1.text_input("CRM")
-            area = col2.text_input("Área de Formação")
-
-            enviar = st.form_submit_button("Salvar Cadastro")
-
-            if enviar:
-                if not nome or not cpf or not email:
-                    st.error("Por favor, preencha os campos obrigatórios (*).")
-                else:
-                    # Preparação do dicionário para o Supabase
-                    dados_aluno = {
-                        "nome_completo": nome,
-                        "cpf": "".join(filter(str.isdigit, cpf)),
-                        "rg": rg,
-                        "email": email,
-                        "telefone": telefone,
-                        "data_nascimento": nascimento.isoformat() if nascimento else None,
-                        "logradouro": rua,
-                        "numero": num,
-                        "bairro": bairro,
-                        "cidade": cidade,
-                        "uf": uf,
-                        "cep": cep,
-                        "crm": crm,
-                        "area_formacao": area
-                    }
+            if existe:
+                st.warning(f"⚠️ O aluno **{existe[0]['nome_completo']}** já possui este CPF cadastrado.")
+                st.info("Utilize a aba **'Lista de Alunos'** para buscar e editar este cadastro.")
+            else:
+                st.success("CPF Novo! Preencha os dados abaixo.")
+                
+                with st.form("form_novo", clear_on_submit=True):
+                    # Seção Pessoal
+                    st.markdown("### 1. Dados Pessoais")
+                    nome = st.text_input("Nome Completo *")
                     
-                    resultado = AlunoRepository.criar_aluno(dados_aluno)
+                    c1, c2 = st.columns(2)
+                    email = c1.text_input("E-mail *")
+                    telefone = c2.text_input("Telefone")
                     
-                    if isinstance(resultado, dict) and "error" in resultado:
-                        st.error(resultado["error"])
-                    else:
-                        st.success("Aluno cadastrado com sucesso!")
-                        st.balloons()
+                    c3, c4, c5 = st.columns(3)
+                    # Data começando em 1990 para facilitar a UX
+                    nascimento = c3.date_input("Data Nascimento", min_value=date(1940, 1, 1), max_value=date.today(), value=date(1990, 1, 1))
+                    nacionalidade = c4.text_input("Nacionalidade", value="Brasileira")
+                    estado_civil = c5.selectbox("Estado Civil", LISTA_ESTADO_CIVIL)
+
+                    # Seção Endereço
+                    st.markdown("### 2. Endereço")
+                    col_cep, col_log = st.columns([1, 3])
+                    cep = col_cep.text_input("CEP")
+                    logradouro = col_log.text_input("Logradouro (Rua, Av...)")
+                    
+                    col_num, col_comp = st.columns([1, 2])
+                    numero = col_num.text_input("Número")
+                    complemento = col_comp.text_input("Complemento (Apto, Bloco...)")
+                    
+                    col_bai, col_cid, col_uf = st.columns([2, 2, 1])
+                    bairro = col_bai.text_input("Bairro")
+                    cidade = col_cid.text_input("Cidade")
+                    uf = col_uf.selectbox("UF", LISTA_ESTADOS)
+
+                    # Seção Profissional
+                    st.markdown("### 3. Profissional")
+                    cp1, cp2 = st.columns(2)
+                    crm = cp1.text_input("CRM")
+                    area = cp2.text_input("Área de Formação")
+
+                    st.markdown("---")
+                    btn_salvar = st.form_submit_button("✅ Salvar Aluno")
+                    
+                    if btn_salvar:
+                        if not nome or not email:
+                            st.error("Nome e E-mail são obrigatórios.")
+                        else:
+                            # Monta dicionário EXATAMENTE com os campos do banco
+                            novo_aluno = {
+                                "nome_completo": nome,
+                                "cpf": "".join(filter(str.isdigit, cpf_input)), # Limpa pontuação
+                                "email": email,
+                                "telefone": telefone,
+                                "data_nascimento": nascimento.isoformat(),
+                                "estado_civil": estado_civil,
+                                "nacionalidade": nacionalidade,
+                                "cep": cep,
+                                "logradouro": logradouro,
+                                "numero": numero,
+                                "complemento": complemento,
+                                "bairro": bairro,
+                                "cidade": cidade,
+                                "uf": uf,
+                                "crm": crm,
+                                "area_formacao": area
+                            }
+                            
+                            res = AlunoRepository.criar_aluno(novo_aluno)
+                            
+                            if isinstance(res, dict) and "error" in res:
+                                st.error(res["error"])
+                            else:
+                                st.success("Aluno cadastrado com sucesso!")
+                                st.balloons()
+                                time.sleep(2)
+                                st.rerun()
 
 if __name__ == "__main__":
     main()
