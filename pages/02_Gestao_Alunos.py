@@ -28,23 +28,23 @@ def main():
 
     # --- ABA 1: LISTA E BUSCA ---
     with tab_listar:
-        # Layout de Busca: Input em cima, Botão embaixo (Full Width)
         st.subheader("Consultar Base de Alunos")
-        termo_busca = st.text_input("Digite o Nome ou CPF para buscar", placeholder="Ex: Carlos ou 000.000.000-00")
         
-        # Botão ocupando a largura da coluna para ficar alinhado visualmente
-        if st.button("🔍 Buscar Aluno", use_container_width=True, type="primary"):
+        # Layout de Busca Compacto
+        c_busca, c_btn = st.columns([4, 1])
+        termo_busca = c_busca.text_input("Buscar", placeholder="Nome ou CPF...", label_visibility="collapsed")
+        btn_buscar = c_btn.button("🔍 Buscar", type="primary", use_container_width=True)
+        
+        if btn_buscar:
             if termo_busca.isdigit():
                 alunos = AlunoRepository.buscar_por_cpf(termo_busca)
             else:
                 alunos = AlunoRepository.filtrar_por_nome(termo_busca)
         else:
-            # Se não buscou nada, lista todos (ou pode deixar vazio se preferir)
             alunos = AlunoRepository.listar_todos()
 
-        st.divider()
+        st.markdown("---")
 
-        # Verifica e Exibe Resultados
         if isinstance(alunos, list):
             if not alunos:
                 st.info("Nenhum registro encontrado.")
@@ -54,56 +54,47 @@ def main():
                 for aluno in alunos:
                     if not isinstance(aluno, dict): continue
 
-                    # Títulos e Cabeçalhos
+                    # Dados Principais para o Cabeçalho
                     nome_display = aluno.get('nome_completo') or "Nome não informado"
                     cpf_display = format_cpf(aluno.get('cpf', '00000000000'))
                     
-                    with st.expander(f"👤 {nome_display} - CPF: {cpf_display}", expanded=False):
+                    # --- CARTÃO DO ALUNO (Layout Compacto) ---
+                    with st.expander(f"👤 **{nome_display}** |  CPF: {cpf_display}", expanded=False):
                         
-                        # --- EXIBIÇÃO DE TODOS OS DADOS (LEITURA) ---
+                        # Bloco 1: Identificação e Contato
+                        st.caption("DADOS PESSOAIS & CONTATO")
+                        c1, c2, c3, c4 = st.columns(4)
+                        c1.markdown(f"**🎂 Nasc:** {formatar_data_br(aluno.get('data_nascimento'))}")
+                        c2.markdown(f"**🏳️ Nac:** {aluno.get('nacionalidade', '-')}")
+                        c3.markdown(f"**💍 Civil:** {aluno.get('estado_civil', '-')}")
+                        c4.markdown(f"**🩺 CRM:** {aluno.get('crm') or '-'}")
                         
-                        # 1. Dados Pessoais
-                        st.markdown("##### 📄 Dados Pessoais")
-                        c1, c2, c3 = st.columns(3)
-                        c1.markdown(f"**Nascimento:** \n{formatar_data_br(aluno.get('data_nascimento'))}")
-                        c2.markdown(f"**Nacionalidade:** \n{aluno.get('nacionalidade', '-')}")
-                        c3.markdown(f"**Estado Civil:** \n{aluno.get('estado_civil', '-')}")
+                        c5, c6 = st.columns(2)
+                        c5.markdown(f"**📧 Email:** {aluno.get('email', '-')}")
+                        c6.markdown(f"**📱 Tel:** {format_phone(aluno.get('telefone', ''))}")
                         
-                        c4, c5 = st.columns(2)
-                        c4.markdown(f"**Email:** \n{aluno.get('email', '-')}")
-                        c5.markdown(f"**Telefone:** \n{format_phone(aluno.get('telefone', ''))}")
-
-                        st.markdown("---")
-
-                        # 2. Endereço
-                        st.markdown("##### 📍 Endereço")
-                        end_completo = f"{aluno.get('logradouro', '')}, {aluno.get('numero', '')}"
-                        if aluno.get('complemento'):
-                            end_completo += f" - {aluno.get('complemento')}"
+                        # Bloco 2: Endereço (Visualmente separado por uma cor de fundo fictícia/divisor)
+                        st.markdown("---") 
+                        st.caption("ENDEREÇO")
                         
-                        st.write(f"**Logradouro:** {end_completo}")
+                        # Linha 1 do Endereço
+                        end_str = f"{aluno.get('logradouro', '')}, {aluno.get('numero', '')}"
+                        if aluno.get('complemento'): end_str += f" - {aluno.get('complemento')}"
                         
-                        ce1, ce2, ce3 = st.columns([2, 2, 1])
-                        ce1.markdown(f"**Bairro:** \n{aluno.get('bairro', '-')}")
-                        ce2.markdown(f"**Cidade:** \n{aluno.get('cidade', '-')}/{aluno.get('uf', '-')}")
-                        ce3.markdown(f"**CEP:** \n{aluno.get('cep', '-')}")
-
-                        st.markdown("---")
-
-                        # 3. Profissional
-                        st.markdown("##### 💼 Profissional")
-                        cp1, cp2 = st.columns(2)
-                        cp1.markdown(f"**CRM:** {aluno.get('crm') or 'Não informado'}")
-                        cp2.markdown(f"**Área de Formação:** {aluno.get('area_formacao') or 'Não informada'}")
+                        st.markdown(f"📍 **{end_str}**")
                         
-                        st.divider()
+                        # Linha 2 do Endereço
+                        ce1, ce2, ce3 = st.columns([2, 1, 1])
+                        ce1.markdown(f"**Bairro:** {aluno.get('bairro', '-')}")
+                        ce2.markdown(f"**Cidade:** {aluno.get('cidade', '-')}/{aluno.get('uf', '-')}")
+                        ce3.markdown(f"**CEP:** {aluno.get('cep', '-')}")
+                        
+                        st.markdown("") # Espaço extra antes do botão
 
                         # --- BOTÃO DE EDIÇÃO ---
-                        with st.popover("✏️ Editar Cadastro Completo", use_container_width=True):
+                        with st.popover("✏️ Editar Cadastro", use_container_width=True):
                             st.write(f"Editando: **{nome_display}**")
                             with st.form(key=f"edit_aluno_{aluno.get('id')}"):
-                                # Os inputs vêm preenchidos com os dados atuais
-                                
                                 # Pessoal
                                 e_nome = st.text_input("Nome Completo", value=aluno.get('nome_completo', ''))
                                 ec1, ec2 = st.columns(2)
