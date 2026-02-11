@@ -5,9 +5,10 @@ from src.auth import login_usuario
 st.set_page_config(page_title="NexusMed Portal", layout="centered")
 
 # 1. ROTEAMENTO DE ASSINATURA (ALUNO)
+# Se houver um token na URL, o aluno não deve ver login, nem menu.
 if "token" in st.query_params:
     token = st.query_params["token"]
-    # Redireciona para a página de assinatura (nome sem emoji)
+    # Redireciona para a página de assinatura (Nome exato do seu arquivo)
     st.switch_page("pages/Assinatura.py")
 
 # 2. TELA DE LOGIN (ADMIN)
@@ -15,7 +16,8 @@ if 'usuario' not in st.session_state:
     st.session_state['usuario'] = None
 
 if st.session_state['usuario']:
-    # Se já estiver logado, vai para a página renomeada (SEM EMOJI)
+    # Se já estiver logado, vai direto para a primeira página do menu
+    # Nome exato do seu arquivo (sem emoji)
     st.switch_page("pages/01_Gerar_Contrato.py")
 
 st.markdown("<h1 style='text-align: center;'>🔒 NexusMed Portal</h1>", unsafe_allow_html=True)
