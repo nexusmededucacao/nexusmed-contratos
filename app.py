@@ -1,35 +1,27 @@
 import streamlit as st
-from src.auth import login_usuario
+import os
 
-# Configuração da Página Inicial
-st.set_page_config(page_title="NexusMed Portal", layout="centered")
+st.set_page_config(page_title="Debug Mode")
 
-# 1. ROTEAMENTO DE ASSINATURA (ALUNO)
-# Se houver um token na URL, vai para a página de Assinatura
-if "token" in st.query_params:
-    token = st.query_params["token"]
-    st.switch_page("pages/Assinatura.py")
+st.title("🕵️ Diagnóstico de Arquivos")
 
-# 2. TELA DE LOGIN (ADMIN)
-if 'usuario' not in st.session_state:
-    st.session_state['usuario'] = None
+# 1. Verifica o que o Python vê na pasta 'pages'
+try:
+    arquivos = os.listdir("pages")
+    st.write("### Arquivos encontrados na pasta 'pages':")
+    st.code(arquivos)
+    
+    # Verifica se o arquivo alvo está na lista
+    target = "01_Gerar_Contrato.py"
+    if target in arquivos:
+        st.success(f"✅ O arquivo '{target}' EXISTE fisicamente!")
+    else:
+        st.error(f"❌ O arquivo '{target}' NÃO foi encontrado. Verifique o nome exato.")
+except Exception as e:
+    st.error(f"Erro ao ler pasta: {e}")
 
-if st.session_state['usuario']:
-    # Se já estiver logado, vai para a página principal (NOME EXATO DO ARQUIVO)
+st.divider()
+
+# 2. Tenta trocar de página manualmente via botão
+if st.button("Tentar ir para Gerar Contrato"):
     st.switch_page("pages/01_Gerar_Contrato.py")
-
-st.markdown("<h1 style='text-align: center;'>🔒 NexusMed Portal</h1>", unsafe_allow_html=True)
-st.markdown("---")
-
-c1, c2, c3 = st.columns([1, 2, 1])
-with c2:
-    with st.form("login_form"):
-        email = st.text_input("E-mail")
-        senha = st.text_input("Senha", type="password")
-        if st.form_submit_button("Entrar", use_container_width=True):
-            user = login_usuario(email, senha)
-            if user:
-                st.session_state['usuario'] = user
-                st.rerun()
-            else:
-                st.error("E-mail ou senha inválidos.")
