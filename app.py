@@ -1,47 +1,36 @@
 import streamlit as st
-from src.auth import criar_admin_inicial
-from src.ui import (
-    render_login, render_sidebar, 
-    tela_gestao_cursos, tela_gestao_alunos, tela_novo_contrato,
-    tela_aceite_aluno
-)
+from src.auth import login_usuario
 
-# Configuração da Página deve ser a primeira instrução Streamlit
-st.set_page_config(page_title="NexusMed Acadêmico", layout="wide")
+# Configuração da Página Inicial
+st.set_page_config(page_title="NexusMed Portal", layout="centered")
 
-def main():
-    # 1. Roteamento: Verifica se é link de assinatura (Aluno)
-    # st.query_params é a nova sintaxe do Streamlit. Antes era st.experimental_get_query_params()
-    query_params = st.query_params
-    token = query_params.get("token", None)
+# 1. ROTEAMENTO DE ASSINATURA (ALUNO)
+# Se houver um token na URL, o aluno não deve ver login, nem menu.
+if "token" in st.query_params:
+    token = st.query_params["token"]
+    # Redireciona internamente para a página de assinatura
+    st.switch_page("pages/Assinatura.py")
 
-    if token:
-        # Modo ALUNO (Tela limpa, sem sidebar)
-        tela_aceite_aluno(token)
-        return
+# 2. TELA DE LOGIN (ADMIN)
+if 'usuario' not in st.session_state:
+    st.session_state['usuario'] = None
 
-    # 2. Modo SISTEMA INTERNO (Admin/Consultor)
-    
-    # Garante que existe pelo menos o usuário Admin no banco (primeiro deploy)
-    criar_admin_inicial()
+if st.session_state['usuario']:
+    # Se já estiver logado, vai direto para a primeira página do menu
+    st.switch_page("pages/01_📝_Gerar_Contrato.py")
 
-    # Verifica Sessão
-    if 'usuario' not in st.session_state or st.session_state['usuario'] is None:
-        render_login()
-        return
+st.markdown("<h1 style='text-align: center;'>🔒 NexusMed Portal</h1>", unsafe_allow_html=True)
+st.markdown("---")
 
-    # Se logado, renderiza menu lateral e conteúdo
-    escolha = render_sidebar()
-    
-    if escolha == "Gerar Contrato":
-        tela_novo_contrato()
-    elif escolha == "Gestão de Alunos":
-        tela_gestao_alunos()
-    elif escolha == "Gestão de Cursos":
-        tela_gestao_cursos()
-    elif escolha == "Gestão de Usuários":
-        st.title("Gestão de Usuários")
-        st.info("Funcionalidade futura: Cadastre novos consultores aqui.")
-
-if __name__ == "__main__":
-    main()
+c1, c2, c3 = st.columns([1, 2, 1])
+with c2:
+    with st.form("login_form"):
+        email = st.text_input("E-mail")
+        senha = st.text_input("Senha", type="password")
+        if st.form_submit_button("Entrar", use_container_width=True):
+            user = login_usuario(email, senha)
+            if user:
+                st.session_state['usuario'] = user
+                st.rerun()
+            else:
+                st.error("E-mail ou senha inválidos.")
