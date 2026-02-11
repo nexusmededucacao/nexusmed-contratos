@@ -1,27 +1,53 @@
 import streamlit as st
-import os
+from src.auth import AuthManager
 
-st.set_page_config(page_title="Debug Mode")
+# 1. Configuração da Página (Deve ser o primeiro comando Streamlit)
+st.set_page_config(
+    page_title="NexusMed Portal",
+    page_icon="🏥",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-st.title("🕵️ Diagnóstico de Arquivos")
+def main():
+    # 2. Inicialização de estados globais
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
 
-# 1. Verifica o que o Python vê na pasta 'pages'
-try:
-    arquivos = os.listdir("pages")
-    st.write("### Arquivos encontrados na pasta 'pages':")
-    st.code(arquivos)
+    # 3. Lógica de Autenticação
+    if not st.session_state.authenticated:
+        # Se não estiver logado, exibe apenas a tela de login
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.image("https://nexusmed.com.br/logo.png", width=200) # Exemplo de Logo
+            st.title("Portal Administrativo")
+            AuthManager.login_form()
+            
+        # Esconde as outras páginas via CSS se não estiver logado (Opcional)
+        st.markdown("""
+            <style>
+                [data-testid="stSidebarNav"] {display: none;}
+            </style>
+        """, unsafe_allow_html=True)
     
-    # Verifica se o arquivo alvo está na lista
-    target = "01_Gerar_Contrato.py"
-    if target in arquivos:
-        st.success(f"✅ O arquivo '{target}' EXISTE fisicamente!")
     else:
-        st.error(f"❌ O arquivo '{target}' NÃO foi encontrado. Verifique o nome exato.")
-except Exception as e:
-    st.error(f"Erro ao ler pasta: {e}")
+        # 4. Painel Principal (Utilizador Autenticado)
+        st.sidebar.write(f"👤 Olá, **{st.session_state.get('user_nome')}**")
+        st.sidebar.info(f"Nível: {st.session_state.get('user_perfil').capitalize()}")
+        
+        if st.sidebar.button("Terminar Sessão"):
+            AuthManager.logout()
 
-st.divider()
+        st.title("🚀 Painel de Contratos NexusMed")
+        st.write("---")
+        
+        # Dashboard Rápido (Exemplo de métricas)
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Contratos Pendentes", "12", "2")
+        col2.metric("Assinados este mês", "45", "15%")
+        col3.metric("Novos Alunos", "8", "+12%")
 
-# 2. Tenta trocar de página manualmente via botão
-if st.button("Tentar ir para Gerar Contrato"):
-    st.switch_page("pages/01_Gerar_Contrato.py")
+        st.info("Utilize o menu lateral para navegar entre a gestão de alunos, cursos e geração de contratos.")
+
+if __name__ == "__main__":
+    main()
