@@ -105,7 +105,9 @@ def main():
         else:
             # Lógica de Carimbo e Finalização
             with st.spinner("Processando assinatura digital..."):
-                ip_usuario = "127.0.0.1" # Em prod: usar headers para pegar IP real
+                from streamlit.web.server.websocket_headers import _get_websocket_headers
+                headers = _get_websocket_headers()
+                ip_usuario = headers.get("X-Forwarded-For", "127.0.0.1").split(",")[0]
                 timestamp = datetime.now().isoformat()
                 
                 # Gera Hash de Autenticidade único para este aceite
