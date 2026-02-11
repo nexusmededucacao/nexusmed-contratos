@@ -13,25 +13,22 @@ from src.repository import (
 )
 from src.services import gerar_contrato_pdf, enviar_email, aplicar_carimbo_digital
 
-# --- UTILS ---
+# --- UTILS E RESET ---
 def get_ip():
-    # Tenta pegar o IP real no Streamlit Cloud
-    try:
-        return st.context.headers.get("X-Forwarded-For", "IP_DESCONHECIDO")
-    except:
-        return "127.0.0.1"
+    try: return st.context.headers.get("X-Forwarded-For", "IP_DESCONHECIDO")
+    except: return "127.0.0.1"
 
 def limpar_sessao():
-    """Reseta o formulário para um novo contrato"""
+    # Limpa variáveis de sessão específicas
     keys = ['contrato_gerado', 'ent_total_input', 'ent_qtd_input']
+    # Limpa dinâmicas
     for k in list(st.session_state.keys()):
         if k.startswith('ent_val_') or k.startswith('ent_dt_') or k.startswith('ent_forma_'):
             del st.session_state[k]
     for k in keys:
         if k in st.session_state: del st.session_state[k]
-    st.rerun()
 
-# --- LÓGICA FINANCEIRA ---
+# --- CÁLCULOS ---
 def resetar_parcelas():
     tot = st.session_state.get('ent_total_input', 0.0)
     qtd = int(st.session_state.get('ent_qtd_input', 1))
@@ -48,7 +45,7 @@ def calcular_cascata():
         v = rest/(qtd-1)
         for i in range(1, qtd): st.session_state[f'ent_val_{i}'] = v
 
-# --- TELAS ---
+# --- TELAS ADMIN ---
 def render_login():
     st.markdown("<h1 style='text-align: center;'>NexusMed Admin</h1>", unsafe_allow_html=True)
     c1,c2,c3=st.columns([1,1,1])
@@ -105,6 +102,7 @@ def tela_gestao_alunos():
                 upsert_aluno({"nome_completo":nm,"cpf":cp,"email":em,"telefone":tl,"rg":rg,"crm":cr,"logradouro":lg,"numero":nu,"cidade":ci,"uf":uf,"cep":ce,"nacionalidade":na,"estado_civil":ec,"area_formacao":ar})
                 st.success("OK"); st.rerun()
 
+# --- TELA DE CONTRATO (PRINCIPAL) ---
 def tela_novo_contrato():
     st.header("📝 Emissão de Contrato")
     c1,c2=st.columns(2)
@@ -142,120 +140,110 @@ def tela_novo_contrato():
     sf=cs3.selectbox("Forma",["Boleto","Cartão"])
     cc1,cc2=st.columns(2); bol=cc1.checkbox("Bolsista"); pac=cc2.checkbox("Paciente")
 
+    # BOTÃO GERAR
     if st.button("💾 Gerar Contrato", type="primary", use_container_width=True):
-        if sr<0: st.error("Erro valores")
-        else:
-            with st.spinner("Gerando..."):
-                tk=str(uuid.uuid4())
-                dd={
-                    "aluno_id":al['id'],"turma_id":t_sel['id'],"valor_curso":vb,"percentual_desconto":pc,"valor_desconto":vd,"valor_final":vf,
-                    "valor_material":0.0,"entrada_valor":et,"entrada_qtd_parcelas":eq,"entrada_forma_pagamento":frm_res,
-                    "saldo_valor":sr,"saldo_qtd_parcelas":sq,"saldo_forma_pagamento":sf,"bolsista":bol,"atendimento_paciente":pac,
-                    "formato_curso":t_sel['formato'],"token_acesso":tk,"status":"pendente"
-                }
-                inf={"detalhes_entrada":det,"inicio_saldo":str(si)}
-                paths=gerar_contrato_pdf(al,t_sel,c_sel,dd,inf)
-                if paths:
-                    local,cloud=paths; dd['caminho_arquivo']=cloud; create_contrato(dd)
-                    st.session_state['contrato_gerado']={"token":tk,"email":al['email'],"local_path":local,"nome":al['nome_completo']}
-                    st.balloons(); st.rerun()
-                else: st.error("Erro PDF")
+        with st.spinner("Gerando..."):
+            tk=str(uuid.uuid4())
+            dd={
+                "aluno_id":al['id'],"turma_id":t_sel['id'],"valor_curso":vb,"percentual_desconto":pc,"valor_desconto":vd,"valor_final":vf,
+                "valor_material":0.0,"entrada_valor":et,"entrada_qtd_parcelas":eq,"entrada_forma_pagamento":frm_res,
+                "saldo_valor":sr,"saldo_qtd_parcelas":sq,"saldo_forma_pagamento":sf,"bolsista":bol,"atendimento_paciente":pac,
+                "formato_curso":t_sel['formato'],"token_acesso":tk,"status":"pendente"
+            }
+            inf={"detalhes_entrada":det,"inicio_saldo":str(si)}
+            paths=gerar_contrato_pdf(al,t_sel,c_sel,dd,inf)
+            if paths:
+                local,cloud=paths; dd['caminho_arquivo']=cloud; create_contrato(dd)
+                st.session_state['contrato_gerado']={"token":tk,"email":al['email'],"local_path":local,"nome":al['nome_completo']}
+                st.balloons(); st.rerun()
+            else: st.error("Erro ao gerar PDF.")
 
+    # PÓS-GERAÇÃO
     if st.session_state.get('contrato_gerado'):
         inf=st.session_state['contrato_gerado']; lk=f"https://nexusmed-contratos.streamlit.app/?token={inf['token']}"
-        st.success("Gerado!"); st.text_input("Link",lk)
+        st.success("✅ Contrato Gerado!"); st.text_input("Link",lk)
         try:
-            with open(inf['local_path'],"rb") as f: st.download_button("📥 Baixar Contrato Original",f,"Contrato_Nexus.pdf")
+            with open(inf['local_path'],"rb") as f: st.download_button("📥 Baixar Contrato",f,"Contrato.pdf")
         except: st.warning("Arquivo expirou.")
         
         if st.button("📧 Enviar Email"): enviar_email(inf['email'],inf['nome'],lk); st.toast("Enviado")
+        
+        # BOTÃO NOVO (Com callback para limpar)
         st.button("🔄 Novo Contrato", on_click=limpar_sessao)
 
-# --- PÁGINA DE ACEITE (COM VALIDAÇÃO) ---
+# --- PÁGINA DE ACEITE ALUNO (LIMPA E FORENSE) ---
 def tela_aceite_aluno(token):
-    # CSS para esconder o menu e footer
+    # CSS para limpar a tela
     st.markdown("""<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;} .stApp {margin-top: -80px;}</style>""", unsafe_allow_html=True)
     
     d = get_contrato_by_token(token)
     if not d: st.error("Link inválido"); return
 
-    st.title("Assinatura de Contrato")
+    st.title("Assinatura Digital")
     st.markdown("---")
 
-    # 1. Download Prévio (Obrigatório visualizar antes)
+    # 1. VISUALIZAÇÃO OBRIGATÓRIA
     if d['status'] == 'assinado':
-        st.success(f"✅ Contrato assinado em {d.get('data_aceite')}.")
-        # Se tiver caminho assinado no banco, poderia baixar aqui.
+        st.success(f"✅ Assinado em {d.get('data_aceite')}.")
+        # Botão para baixar o assinado
+        try:
+            from src.db import supabase
+            data_pdf = supabase.storage.from_("contratos").download(d['caminho_arquivo'])
+            st.download_button("📥 Baixar Contrato Assinado", data_pdf, "Contrato_Assinado.pdf", "application/pdf")
+        except: pass
         return
 
-    # Tenta baixar o arquivo original da nuvem para o aluno ver
-    from src.db import supabase
+    # Baixa PDF para visualização
     try:
+        from src.db import supabase
         data_pdf = supabase.storage.from_("contratos").download(d['caminho_arquivo'])
-        st.download_button("📄 Visualizar Contrato (PDF)", data_pdf, "Minuta_Contrato.pdf", mime="application/pdf", use_container_width=True)
-    except:
-        st.warning("Erro ao carregar visualização.")
+        st.download_button("📄 CLIQUE AQUI PARA LER O CONTRATO (PDF)", data_pdf, "Minuta_Contrato.pdf", "application/pdf", use_container_width=True)
+    except: st.warning("Erro ao carregar PDF.")
 
-    st.markdown("### Confirmação de Identidade")
+    st.divider()
+    st.markdown("### Confirmação")
     
-    with st.form("form_aceite"):
-        nome_input = st.text_input("Digite seu Nome Completo")
-        cpf_input = st.text_input("Digite seu CPF (apenas números)")
-        check_termos = st.checkbox("Li o contrato acima e CONCORDO com todos os seus termos.")
+    with st.form("aceite"):
+        nome_input = st.text_input("Seu Nome Completo")
+        cpf_input = st.text_input("Seu CPF (apenas números)")
+        check_termos = st.checkbox("Li o contrato acima e concordo com os termos.")
         
-        submitted = st.form_submit_button("✍️ ASSINAR DIGITALMENTE", use_container_width=True)
-        
-        if submitted:
-            # Validação
+        if st.form_submit_button("✍️ ASSINAR AGORA", use_container_width=True):
+            # Validação Rigorosa
             cpf_limpo = ''.join(filter(str.isdigit, cpf_input))
             cpf_real = d['alunos']['cpf']
             nome_real = d['alunos']['nome_completo']
             
             if cpf_limpo != cpf_real:
-                st.error("CPF incorreto. Verifique seus dados.")
+                st.error("CPF incorreto.")
             elif nome_input.lower().strip() != nome_real.lower().strip():
-                st.error(f"Nome incorreto. Digite exatamente: {nome_real}")
+                st.error(f"Nome incorreto. Digite: {nome_real}")
             elif not check_termos:
-                st.error("Você deve marcar a caixa 'Li e concordo'.")
+                st.error("Marque a caixa de aceite.")
             else:
-                with st.spinner("Registrando assinatura e carimbando documento..."):
-                    # Coleta de Dados Forenses
+                with st.spinner("Registrando assinatura forense..."):
+                    # Coleta Dados
                     fuso = pytz.timezone('America/Sao_Paulo')
                     agora = datetime.now(fuso)
-                    ip_real = get_ip()
+                    ip = get_ip()
+                    raw = f"{d['id']}{agora}{cpf_real}{ip}"
+                    hash_ass = hashlib.sha256(raw.encode()).hexdigest().upper()
+                    lk_origem = f"https://nexusmed-contratos.streamlit.app/?token={token}"
                     
-                    # Cria Hash (Dados + Time)
-                    raw_str = f"{d['id']}{agora}{cpf_real}{ip_real}"
-                    hash_ass = hashlib.sha256(raw_str.encode()).hexdigest().upper()
-                    
-                    link_origem = f"https://nexusmed-contratos.streamlit.app/?token={token}"
-                    
-                    # Texto para o carimbo
-                    metadados = {
-                        "token": d['id'].split('-')[0], # ID curto
+                    meta = {
+                        "token": d['id'].split('-')[0],
                         "data_hora": agora.strftime('%d/%m/%Y às %H:%M:%S (GMT-3)'),
-                        "nome": nome_real,
-                        "cpf": cpf_real,
-                        "email": d['alunos']['email'],
-                        "ip": ip_real,
-                        "link": link_origem,
-                        "hash": hash_ass
+                        "nome": nome_real, "cpf": cpf_real, "email": d['alunos']['email'],
+                        "ip": ip, "link": lk_origem, "hash": hash_ass
                     }
                     
-                    # Aplica carimbo no PDF na nuvem e pega novo link
-                    path_assinado = aplicar_carimbo_digital(d['caminho_arquivo'], metadados) # Chama services
+                    # Carimba PDF
+                    path_assinado = aplicar_carimbo_digital(d['caminho_arquivo'], meta)
                     
-                    # Atualiza Banco
+                    # Salva
                     registrar_aceite(d['id'], {
-                        "status": "assinado",
-                        "data_aceite": agora.isoformat(),
-                        "ip_aceite": ip_real,
-                        "hash_aceite": hash_ass,
-                        "recibo_aceite_texto": str(metadados),
-                        "caminho_arquivo": path_assinado # Atualiza para o arquivo assinado
+                        "status": "assinado", "data_aceite": agora.isoformat(),
+                        "ip_aceite": ip, "hash_aceite": hash_ass,
+                        "recibo_aceite_texto": str(meta), "caminho_arquivo": path_assinado
                     })
-                    
-                    st.balloons()
-                    st.success("Assinatura realizada com sucesso!")
-                    time.sleep(2)
-                    st.rerun()
+                    st.balloons(); st.success("Assinado!"); time.sleep(2); st.rerun()
