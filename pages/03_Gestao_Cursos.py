@@ -29,11 +29,48 @@ def main():
                     
                     st.write("---")
                     st.subheader("📅 Turmas deste Curso")
+                    
                     if curso['turmas']:
-                        for t in curso['turmas']:
-                            st.write(f"🔹 Código: `{t['codigo_turma']}` | Início: {t['data_inicio']} | Formato: {t['formato']}")
+                        # Ordena para mostrar ativas primeiro
+                        turmas_ordenadas = sorted(curso['turmas'], key=lambda x: x.get('ativo', True), reverse=True)
+                        
+                        for t in turmas_ordenadas:
+                            # Tratamento para turmas antigas que podem vir sem o campo 'ativo' preenchido
+                            is_active = t.get('ativo', True)
+                            icon_turma = "🟢" if is_active else "🔴"
+                            style_turma = "**" if is_active else "~~" # Riscado se inativo
+                            
+                            c_t1, c_t2, c_t3 = st.columns([2, 2, 1])
+                            
+                            # Exibição Visual do Status
+                            c_t1.markdown(f"{icon_turma} {style_turma}{t['codigo_turma']}{style_turma} ({t['formato']})")
+                            c_t2.caption(f"De {t['data_inicio']} até {t['data_fim']}")
+                            
+                            # Botão de Ação (Popover)
+                            with c_t3.popover("Gerenciar"):
+                                with st.form(key=f"gerenciar_turma_{t['id']}"):
+                                    st.write(f"Gerenciar Turma: {t['codigo_turma']}")
+                                    
+                                    # Inputs de Edição
+                                    nova_data_fim = st.date_input("Data Fim", value=datetime.fromisoformat(t['data_fim']) if t['data_fim'] else None)
+                                    novo_status = st.checkbox("Turma Ativa?", value=is_active)
+                                    
+                                    if st.form_submit_button("Salvar Alterações"):
+                                        # Atualiza dados e status
+                                        CursoRepository.atualizar_turma(t['id'], {
+                                            "data_fim": nova_data_fim.isoformat() if nova_data_fim else None,
+                                            "ativo": novo_status
+                                        })
+                                        
+                                        # Mensagem baseada na ação
+                                        if not novo_status and is_active:
+                                            st.warning("Turma inativada! Ela não aparecerá mais para novos contratos.")
+                                        else:
+                                            st.success("Turma atualizada com sucesso!")
+                                            
+                                        st.rerun()
                     else:
-                        st.write("Nenhuma turma aberta para este curso.")
+                        st.caption("Nenhuma turma cadastrada.")
 
     # --- ABA: NOVO CURSO ---
     with tab_novo_curso:
