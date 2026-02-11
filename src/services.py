@@ -6,24 +6,23 @@ import subprocess
 import pytz
 from datetime import datetime
 from docxtpl import DocxTemplate
-from docx import Document # Manipulação direta
-from docx.shared import Pt
+from docx import Document 
+from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
+from reportlab.lib.pagesizes import A4
 from src.db import supabase
 
 # --- CONFIGURAÇÃO ---
 TEMPLATE_PATH = "assets/modelo_contrato_V2.docx"
 
-# --- HELPER: FORMATAÇÃO ---
+# --- HELPERS ---
 def format_moeda(valor):
-    if valor is None: return "R$ 0,00"
+    if valor is None: return "0,00"
     try:
-        # Se vier texto (ex: R$ 1.000,00), limpa para float primeiro
         if isinstance(valor, str):
             valor = float(valor.replace("R$", "").replace(".", "").replace(",", ".").strip())
         return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -42,50 +41,60 @@ def parse_float(valor):
         return float(str(valor).replace("R$", "").replace(".", "").replace(",", ".").strip())
     except: return 0.0
 
-# --- FUNÇÃO MÁGICA: INJETAR LINHAS NA TABELA ---
-def preencher_tabelas_word(docx_path, dados_entrada, dados_saldo):
-    """
-    Abre o DOCX já preenchido com textos e adiciona as linhas nas tabelas financeiras.
-    Assume que:
-    - Tabela índice 2 = Entrada (Item 03)
-    - Tabela índice 3 = Saldo (Item 04)
-    Baseado na ordem visual do seu documento.
-    """
+# --- PREENCHIMENTO DE TABELAS (MANIPULAÇÃO DIRETA) ---
+def preencher_tabelas_pagamento(docx_path, dados_entrada, dados_saldo):
     doc = Document(docx_path)
     
-    # Estilo padrão para as células novas
-    def formatar_celula(cell, texto):
-        cell.text = texto
-        for paragraph in cell.paragraphs:
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            for run in paragraph.runs:
-                run.font.name = 'Arial'
-                run.font.size = Pt(9)
+    def aplicar_estilo(run):
+        run.font.name = 'Arial'
+        run.font.size = Pt(10)
+        run.font.color.rgb = RGBColor(0, 0, 0)
 
-    # --- 1. PREENCHER ENTRADA (Tabela 2) ---
+    # 1. PREENCHER ENTRADA (Tabela Índice 2 - 3ª tabela do doc)
     try:
-        tbl_ent = doc.tables[2] # Terceira tabela do documento
+        tbl_ent = doc.tables[2]
+        tbl_ent.style = 'Table Grid'
+        
+        # Limpa linhas antigas (mantém apenas o cabeçalho)
+        while len(tbl_ent.rows) > 1:
+            tbl_ent._element.remove(tbl_ent.rows[-1]._element)
+            
         for item in dados_entrada:
-            row = tbl_ent.add_row() # Cria linha nova
-            # Preenche células (0=Parc, 1=Venc, 2=Valor, 3=Forma)
-            formatar_celula(row.cells[0], str(item['numero']))
-            formatar_celula(row.cells[1], format_data(item['data']))
-            formatar_celula(row.cells[2], format_moeda(item['valor']))
-            formatar_celula(row.cells[3], str(item['forma']))
+            row = tbl_ent.add_row()
+            # Colunas: Parcela | Vencimento | Valor | Forma
+            vals = [str(item['numero']), format_data(item['data']), "R$ " + format_moeda(item['valor']), str(item['forma'])]
+            for i, v in enumerate(vals):
+                row.cells[i].text = v
+                for p in row.cells[i].paragraphs: 
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    if p.runs: aplicar_estilo(p.runs[0])
+                    else: 
+                        r = p.add_run(v)
+                        aplicar_estilo(r)
     except Exception as e:
-        print(f"Erro ao preencher tabela entrada: {e}")
+        print(f"Erro Tabela Entrada: {e}")
 
-    # --- 2. PREENCHER SALDO (Tabela 3) ---
+    # 2. PREENCHER SALDO (Tabela Índice 3 - 4ª tabela do doc)
     try:
-        tbl_sal = doc.tables[3] # Quarta tabela do documento
+        tbl_sal = doc.tables[3]
+        tbl_sal.style = 'Table Grid'
+        
+        while len(tbl_sal.rows) > 1:
+            tbl_sal._element.remove(tbl_sal.rows[-1]._element)
+            
         for item in dados_saldo:
             row = tbl_sal.add_row()
-            formatar_celula(row.cells[0], str(item['numero']))
-            formatar_celula(row.cells[1], item['data_vencimento']) # Já vem formatada da lógica
-            formatar_celula(row.cells[2], item['valor'])           # Já vem formatada
-            formatar_celula(row.cells[3], str(item['forma_pagamento']))
+            vals = [str(item['numero']), item['data_vencimento'], "R$ " + item['valor'], str(item['forma_pagamento'])]
+            for i, v in enumerate(vals):
+                row.cells[i].text = v
+                for p in row.cells[i].paragraphs: 
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    if p.runs: aplicar_estilo(p.runs[0])
+                    else: 
+                        r = p.add_run(v)
+                        aplicar_estilo(r)
     except Exception as e:
-        print(f"Erro ao preencher tabela saldo: {e}")
+        print(f"Erro Tabela Saldo: {e}")
 
     doc.save(docx_path)
 
@@ -95,16 +104,14 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
         st.error(f"❌ Template não encontrado: {TEMPLATE_PATH}")
         return None
 
-    # 1. Preparar Dados para a Injeção (Listas Puras)
+    # Cálculos e Listas
     lista_entrada = datas_info.get('detalhes_entrada', [])
-    
     lista_saldo = []
     qtd_s = int(contrato['saldo_qtd_parcelas'])
     if qtd_s > 0:
         val_s = parse_float(contrato['saldo_valor']) / qtd_s
         try: ini_s = datetime.strptime(datas_info.get('inicio_saldo'), "%Y-%m-%d")
         except: ini_s = datetime.now()
-        
         from dateutil.relativedelta import relativedelta
         for i in range(qtd_s):
             dt = ini_s + relativedelta(months=i)
@@ -115,18 +122,17 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
                 "forma_pagamento": contrato['saldo_forma_pagamento']
             })
 
-    # 2. Cálculos Financeiros
     v_bruto = parse_float(contrato['valor_curso'])
     v_desc = parse_float(contrato['valor_desconto'])
     v_final = parse_float(contrato['valor_final'])
-    v_material = v_bruto * 0.30 # Cálculo Correto
+    v_material = v_bruto * 0.30 
 
-    # 3. Contexto (Apenas Variáveis de Texto)
     hoje = datetime.now()
     meses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
     
+    # CONTEXTO (Preenche Tabela Produto e Textos Gerais)
     context = {
-        # PESSOAL
+        # Pessoais
         "nome": aluno['nome_completo'].upper(), "cpf": aluno['cpf'],
         "estado_civil": aluno.get('estado_civil', ''), "email": aluno['email'],
         "área_formação": aluno.get('area_formacao', ''), "data_nascimento": format_data(aluno.get('data_nascimento')),
@@ -135,40 +141,37 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
         "numero": aluno.get('numero',''), "bairro": aluno.get('bairro',''),
         "complemento": aluno.get('complemento',''), "cidade": aluno.get('cidade',''),
         "uf": aluno.get('uf',''), "cep": aluno.get('cep',''),
-
-        # CURSO
+        
+        # Produto (Preenchido pelo Word agora)
         "pos_graduacao": curso['nome'], 
         "formato_curso": contrato.get('formato_curso', 'Digital'),
         "turma": turma['codigo_turma'],
         "atendimento": "SIM" if contrato['atendimento_paciente'] else "NÃO",
         "bolsista": "SIM" if contrato['bolsista'] else "NÃO",
-
-        # FINANCEIRO
-        "valor_curso": format_moeda(v_bruto).replace("R$ ", ""), # Remove R$ pois template já tem
-        "valor_desconto": format_moeda(v_desc).replace("R$ ", ""),
-        "pencentual_desconto": f"{contrato['percentual_desconto']}", 
-        "valor_final": format_moeda(v_final).replace("R$ ", ""),
-        "valor_material": format_moeda(v_material).replace("R$ ", ""),
-
-        # DATA
+        "valor_curso": format_moeda(v_bruto),
+        "valor_desconto": format_moeda(v_desc),
+        "pencentual_desconto": f"{contrato['percentual_desconto']}%",
+        "valor_final": format_moeda(v_final),
+        
+        # Outros
+        "valor_material": format_moeda(v_material),
         "dia": hoje.day, "mês": meses[hoje.month - 1], "ano": hoje.year
     }
 
     try:
-        # A. Preenche Textos com docxtpl
+        # 1. Preenche Textos
         doc = DocxTemplate(TEMPLATE_PATH)
         doc.render(context)
         
         filename = f"Contrato_{aluno['cpf']}_{turma['codigo_turma']}"
         docx_path = f"/tmp/{filename}.docx"
         pdf_path = f"/tmp/{filename}.pdf"
+        doc.save(docx_path)
         
-        doc.save(docx_path) # Salva o arquivo com textos preenchidos e tabelas vazias
+        # 2. Injeta Tabelas de Pagamento
+        preencher_tabelas_pagamento(docx_path, lista_entrada, lista_saldo)
         
-        # B. Injeta as Linhas das Tabelas com python-docx
-        preencher_tabelas_word(docx_path, lista_entrada, lista_saldo)
-        
-        # C. Converte para PDF
+        # 3. Conversão
         cmd = ["soffice", "--headless", "--convert-to", "pdf", "--outdir", "/tmp", docx_path]
         subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
@@ -176,7 +179,6 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
         mime = "application/pdf" if os.path.exists(pdf_path) else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         ext = ".pdf" if os.path.exists(pdf_path) else ".docx"
         
-        # D. Upload
         path_cloud = f"{hoje.year}/{hoje.month}/{filename}{ext}"
         with open(final_local, "rb") as f:
             supabase.storage.from_("contratos").upload(path_cloud, f, {"content-type": mime, "upsert": "true"})
@@ -184,10 +186,50 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
         return final_local, path_cloud
 
     except Exception as e:
-        st.error(f"Erro Processamento: {e}")
+        st.error(f"Erro: {e}")
         return None
 
-# --- CARIMBO E EMAIL (Mantidos) ---
+# --- CARIMBO FORENSE (RODAPÉ CENTRALIZADO) ---
+def aplicar_carimbo_digital(path_cloud, metadados):
+    if not path_cloud.endswith(".pdf"): return path_cloud
+    
+    try:
+        print(f"Carimbando arquivo: {path_cloud}")
+        data = supabase.storage.from_("contratos").download(path_cloud)
+        pdf_reader = PdfReader(io.BytesIO(data))
+        pdf_writer = PdfWriter()
+        
+        packet = io.BytesIO()
+        c = canvas.Canvas(packet, pagesize=A4) # Usa A4
+        
+        c.setFont("Helvetica-Bold", 7)
+        c.setFillColorRGB(0.2, 0.2, 0.2)
+        
+        texto = f"ASSINADO DIGITALMENTE | {metadados['nome']} (CPF: {metadados['cpf']}) | DATA: {metadados['data_hora']} | HASH: {metadados['hash']}"
+        
+        # Centralizado no rodapé (X=297, Y=25)
+        c.drawCentredString(297, 25, texto)
+        
+        c.save()
+        packet.seek(0)
+        watermark = PdfReader(packet).pages[0]
+        
+        for page in pdf_reader.pages:
+            page.merge_page(watermark)
+            pdf_writer.add_page(page)
+            
+        output = io.BytesIO()
+        pdf_writer.write(output)
+        output.seek(0)
+        
+        new_path = path_cloud.replace(".pdf", "_assinado.pdf")
+        supabase.storage.from_("contratos").upload(new_path, output, {"content-type": "application/pdf", "upsert": "true"})
+        
+        return new_path
+
+    except Exception as e:
+        print(f"ERRO CARIMBO: {e}")
+        return path_cloud
 
 def enviar_email(dest, nome, link):
     try:
