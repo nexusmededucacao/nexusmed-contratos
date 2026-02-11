@@ -6,6 +6,9 @@ from dateutil.relativedelta import relativedelta
 from src.repository import get_cursos, get_turmas_by_curso, get_aluno_by_cpf, create_contrato
 from src.services import gerar_contrato_pdf, enviar_email
 
+# --- CONFIG DA PÁGINA ---
+st.set_page_config(page_title="Gerar Contrato", layout="wide")
+
 # --- SEGURANÇA ---
 if 'usuario' not in st.session_state or not st.session_state['usuario']:
     st.switch_page("app.py")
