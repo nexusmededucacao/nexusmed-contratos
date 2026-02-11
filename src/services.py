@@ -13,14 +13,24 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from src.db import supabase
 
-# --- CAMINHO DO ARQUIVO ---
+# --- CONFIGURAÇÃO ---
 TEMPLATE_PATH = "assets/modelo_contrato_V2.docx"
 
-# --- FORMATAÇÃO ---
+# --- HELPER: CONVERTER MOEDA (TEXTO -> FLOAT) ---
+def parse_moeda(valor):
+    """Converte 'R$ 1.500,00' ou float 1500.0 para float puro"""
+    if not valor: return 0.0
+    if isinstance(valor, (int, float)): return float(valor)
+    try:
+        # Remove R$, pontos de milhar e troca vírgula por ponto
+        limpo = str(valor).replace("R$", "").replace(" ", "").replace(".", "").replace(",", ".")
+        return float(limpo)
+    except: return 0.0
+
+# --- HELPER: FORMATAR (FLOAT -> TEXTO) ---
 def format_moeda(valor):
-    if valor is None: return "R$ 0,00"
     try: return f"{float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    except: return "R$ 0,00"
+    except: return "0,00"
 
 def format_data(data_obj):
     try:
@@ -32,26 +42,25 @@ def format_data(data_obj):
 # --- GERAÇÃO DO PDF ---
 def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
     if not os.path.exists(TEMPLATE_PATH):
-        st.error(f"❌ Template não encontrado em: {TEMPLATE_PATH}")
+        st.error(f"❌ Template não encontrado: {TEMPLATE_PATH}")
         return None
 
-    # 1. Tabela Entrada
+    # 1. PREPARAÇÃO DAS TABELAS
     tbl_entrada = []
     detalhes = datas_info.get('detalhes_entrada', [])
     if detalhes:
         for x in detalhes:
             tbl_entrada.append({
-                "numero": str(x['numero']), 
+                "numero": str(x['numero']),
                 "data_vencimento": format_data(x['data']),
-                "valor": format_moeda(x['valor']).replace("R$ ", ""), # Remove R$ para caber na tabela
+                "valor": format_moeda(x['valor']),
                 "forma_pagamento": str(x['forma'])
             })
     
-    # 2. Tabela Saldo
     tbl_saldo = []
     qtd_s = int(contrato['saldo_qtd_parcelas'])
     if qtd_s > 0:
-        val_s = float(contrato['saldo_valor']) / qtd_s
+        val_s = parse_moeda(contrato['saldo_valor']) / qtd_s
         try: ini_s = datetime.strptime(datas_info.get('inicio_saldo'), "%Y-%m-%d")
         except: ini_s = datetime.now()
         
@@ -61,24 +70,24 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
             tbl_saldo.append({
                 "numero": f"{i+1}/{qtd_s}",
                 "data_vencimento": dt.strftime("%d/%m/%Y"),
-                "valor": format_moeda(val_s).replace("R$ ", ""),
-                "forma_pagamento": str(contrato['saldo_forma_pagamento'])
+                "valor": format_moeda(val_s),
+                "forma_pagamento": contrato['saldo_forma_pagamento']
             })
 
-    # 3. CÁLCULO DO MATERIAL (30%) - CORREÇÃO DO R$ 0,00
-    valor_bruto = float(contrato['valor_curso'])
-    valor_material = valor_bruto * 0.30
+    # 2. CÁLCULOS FINANCEIROS CORRIGIDOS
+    v_bruto = parse_moeda(contrato['valor_curso'])
+    v_desc_val = parse_moeda(contrato['valor_desconto'])
+    v_final = parse_moeda(contrato['valor_final'])
+    
+    # Cálculo dos 30% do material sobre o valor bruto
+    v_material = v_bruto * 0.30
 
-    # 4. Contexto (Mapeamento EXATO para o seu Word)
+    # 3. CONTEXTO (PREENCHIMENTO DO WORD)
     hoje = datetime.now()
     meses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
     
-    # Lógica de SIM/NÃO
-    txt_atendimento = "SIM" if contrato['atendimento_paciente'] else "NÃO"
-    txt_bolsista = "SIM" if contrato['bolsista'] else "NÃO"
-
     context = {
-        # DADOS PESSOAIS
+        # PESSOAL
         "nome": aluno['nome_completo'].upper(),
         "cpf": aluno['cpf'],
         "estado_civil": aluno.get('estado_civil', ''),
@@ -96,25 +105,25 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
         "uf": aluno.get('uf',''),
         "cep": aluno.get('cep',''),
 
-        # DADOS DO CURSO (Corrigido conforme seu print)
-        "pos_graduacao": curso['nome'],  # No Word está {{ pos_graduacao }}
-        "formato_curso": contrato.get('formato_curso', ''),
+        # CURSO (Nomes exatos do seu print)
+        "pos_graduacao": curso['nome'], 
+        "formato_curso": contrato.get('formato_curso', 'Digital'),
         "turma": turma['codigo_turma'],
-        "atendimento": txt_atendimento,
-        "bolsista": txt_bolsista,
+        "atendimento": "SIM" if contrato['atendimento_paciente'] else "NÃO",
+        "bolsista": "SIM" if contrato['bolsista'] else "NÃO",
 
         # FINANCEIRO
-        "valor_curso": format_moeda(valor_bruto).replace("R$ ", ""), # O Word já tem o R$
-        "valor_desconto": format_moeda(contrato['valor_desconto']).replace("R$ ", ""),
-        "pencentual_desconto": f"{contrato['percentual_desconto']}%", # Mantido erro de digitação do Word 'pencentual'
-        "valor_final": format_moeda(contrato['valor_final']).replace("R$ ", ""),
-        "valor_material": format_moeda(valor_material).replace("R$ ", ""), # Corrigido
+        "valor_curso": format_moeda(v_bruto),
+        "valor_desconto": format_moeda(v_desc_val),
+        "pencentual_desconto": f"{contrato['percentual_desconto']}", # Mantido 'pencentual' conforme seu Word
+        "valor_final": format_moeda(v_final),
+        "valor_material": format_moeda(v_material), # Agora vai preenchido!
 
         # TABELAS
         "tbl_entrada": tbl_entrada,
         "tbl_saldo": tbl_saldo,
 
-        # ASSINATURA
+        # DATA
         "dia": hoje.day,
         "mês": meses[hoje.month - 1],
         "ano": hoje.year
@@ -138,8 +147,8 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
         mime = "application/pdf" if os.path.exists(pdf_path) else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         ext = ".pdf" if os.path.exists(pdf_path) else ".docx"
         
+        # Upload
         path_cloud = f"{hoje.year}/{hoje.month}/{filename}{ext}"
-        
         with open(final_local, "rb") as f:
             supabase.storage.from_("contratos").upload(path_cloud, f, {"content-type": mime, "upsert": "true"})
             
@@ -149,47 +158,29 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
         st.error(f"Erro Template: {e}")
         return None
 
-# --- CARIMBO E EMAIL (Mantidos) ---
-def aplicar_carimbo_digital(path_cloud, metadados):
-    if not path_cloud.endswith(".pdf"): return path_cloud
+# --- E-MAIL E CARIMBO (Mantidos) ---
+def aplicar_carimbo_digital(path, meta):
+    if not path.endswith(".pdf"): return path
     try:
-        data = supabase.storage.from_("contratos").download(path_cloud)
-        pdf_reader = PdfReader(io.BytesIO(data)); pdf_writer = PdfWriter()
-        packet = io.BytesIO(); c = canvas.Canvas(packet, pagesize=letter)
-        c.setFont("Helvetica", 6); c.setFillColorRGB(0.2, 0.2, 0.2, 0.5)
-        
-        txt = f"ACEITE DIGITAL | Data: {metadados['data_hora']} | IP: {metadados['ip']} | CPF: {metadados['cpf']} | Hash: {metadados['hash']}"
-        
-        # Carimbo no rodapé esquerdo
-        c.drawString(20, 20, txt)
-        c.save(); packet.seek(0)
-        watermark = PdfReader(packet).pages[0]
-        
-        for page in pdf_reader.pages:
-            page.merge_page(watermark)
-            pdf_writer.add_page(page)
-            
-        out = io.BytesIO(); pdf_writer.write(out); out.seek(0)
-        new_path = path_cloud.replace(".pdf", "_assinado.pdf")
-        supabase.storage.from_("contratos").upload(new_path, out, {"content-type": "application/pdf", "upsert": "true"})
-        return new_path
-    except: return path_cloud
+        d = supabase.storage.from_("contratos").download(path)
+        r = PdfReader(io.BytesIO(d)); w = PdfWriter()
+        p = io.BytesIO(); c = canvas.Canvas(p, pagesize=letter)
+        c.setFont("Helvetica",6); c.setFillColorRGB(0.5,0.5,0.5,0.5)
+        txt = f"ACEITE DIGITAL | {meta['data_hora']} | {meta['nome']} | IP:{meta['ip']} | Hash:{meta['hash'][:15]}..."
+        c.drawString(20,20,txt); c.save(); p.seek(0)
+        wm = PdfReader(p).pages[0]
+        for pg in r.pages: pg.merge_page(wm); w.add_page(pg)
+        out = io.BytesIO(); w.write(out); out.seek(0)
+        np = path.replace(".pdf","_assinado.pdf")
+        supabase.storage.from_("contratos").upload(np, out, {"content-type":"application/pdf","upsert":"true"})
+        return np
+    except: return path
 
-def enviar_email(destinatario, nome, link):
+def enviar_email(dest, nome, link):
     try:
         msg = MIMEMultipart()
-        msg['From'] = st.secrets["GMAIL_EMAIL"]; msg['To'] = destinatario
-        msg['Subject'] = "Assinatura Pendente - NexusMed"
-        html = f"""
-        <div style="font-family:Arial; padding:20px; border:1px solid #ccc;">
-            <h2 style="color:#003366;">Olá, {nome}</h2>
-            <p>Seu contrato está pronto para assinatura.</p>
-            <a href="{link}" style="background-color:#003366; color:white; padding:10px 20px; text-decoration:none; border-radius:5px;">ASSINAR AGORA</a>
-        </div>
-        """
-        msg.attach(MIMEText(html, 'html'))
-        s = smtplib.SMTP("smtp.gmail.com", 587); s.starttls()
-        s.login(st.secrets["GMAIL_EMAIL"], st.secrets["GMAIL_PASSWORD"])
-        s.sendmail(msg['From'], destinatario, msg.as_string()); s.quit()
-        return True
+        msg['From']=st.secrets["GMAIL_EMAIL"]; msg['To']=dest; msg['Subject']="Assinatura NexusMed"
+        msg.attach(MIMEText(f"Olá {nome}, assine aqui: {link}",'html'))
+        s=smtplib.SMTP("smtp.gmail.com",587); s.starttls(); s.login(st.secrets["GMAIL_EMAIL"],st.secrets["GMAIL_PASSWORD"])
+        s.sendmail(msg['From'],dest,msg.as_string()); s.quit(); return True
     except: return False
