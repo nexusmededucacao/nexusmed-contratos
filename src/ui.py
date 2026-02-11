@@ -171,63 +171,104 @@ def tela_novo_contrato():
         # BOTÃO NOVO (Com callback para limpar)
         st.button("🔄 Novo Contrato", on_click=limpar_sessao)
 
-# --- PÁGINA DE ACEITE ALUNO (LIMPA E FORENSE) ---
+# --- PÁGINA DE ACEITE (CSS AGRESSIVO + VALIDAÇÃO) ---
 def tela_aceite_aluno(token):
-    # CSS para limpar a tela
-    st.markdown("""<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;} .stApp {margin-top: -80px;}</style>""", unsafe_allow_html=True)
+    # CSS BLINDADO: Esconde Menu, Footer e o botão MANAGE APP
+    st.markdown("""
+        <style>
+            /* Esconde o Menu Superior (Hamburger) */
+            #MainMenu {visibility: hidden;}
+            
+            /* Esconde o Rodapé padrão */
+            footer {visibility: hidden;}
+            
+            /* Esconde o Cabeçalho superior */
+            header {visibility: hidden;}
+            [data-testid="stHeader"] {visibility: hidden;}
+            
+            /* CRÍTICO: Esconde o botão 'Manage App' e 'Deploy' */
+            .stDeployButton {display: none;}
+            [data-testid="stToolbar"] {visibility: hidden !important;}
+            [data-testid="stDecoration"] {display: none;}
+            
+            /* Sobe o conteúdo para o topo da página */
+            .block-container {
+                padding-top: 1rem !important;
+                padding-bottom: 1rem !important;
+            }
+        </style>
+    """, unsafe_allow_html=True)
     
     d = get_contrato_by_token(token)
-    if not d: st.error("Link inválido"); return
+    if not d: st.error("Link inválido ou expirado."); return
 
-    st.title("Assinatura Digital")
+    # Título centralizado
+    st.markdown("<h2 style='text-align: center;'>Assinatura Digital</h2>", unsafe_allow_html=True)
     st.markdown("---")
 
-    # 1. VISUALIZAÇÃO OBRIGATÓRIA
+    # 1. STATUS: Se já assinado
     if d['status'] == 'assinado':
-        st.success(f"✅ Assinado em {d.get('data_aceite')}.")
-        # Botão para baixar o assinado
+        st.success(f"✅ Contrato assinado em {d.get('data_aceite')}.")
         try:
             from src.db import supabase
             data_pdf = supabase.storage.from_("contratos").download(d['caminho_arquivo'])
-            st.download_button("📥 Baixar Contrato Assinado", data_pdf, "Contrato_Assinado.pdf", "application/pdf")
+            st.download_button("📥 Baixar Contrato Assinado", data_pdf, "Contrato_Assinado.pdf", "application/pdf", use_container_width=True)
         except: pass
         return
 
-    # Baixa PDF para visualização
+    # 2. ÁREA DE LEITURA (VISUALIZAÇÃO)
+    st.info(f"Olá, **{d['alunos']['nome_completo']}**. Por favor, leia o contrato abaixo antes de assinar.")
+    
     try:
         from src.db import supabase
         data_pdf = supabase.storage.from_("contratos").download(d['caminho_arquivo'])
-        st.download_button("📄 CLIQUE AQUI PARA LER O CONTRATO (PDF)", data_pdf, "Minuta_Contrato.pdf", "application/pdf", use_container_width=True)
-    except: st.warning("Erro ao carregar PDF.")
+        # Botão largo para download/visualização
+        st.download_button("📄 CLIQUE AQUI PARA BAIXAR E LER O PDF", data_pdf, "Minuta_Contrato.pdf", "application/pdf", use_container_width=True)
+    except: st.warning("Erro ao carregar pré-visualização.")
 
-    st.divider()
-    st.markdown("### Confirmação")
+    st.markdown("---")
+    
+    # 3. FORMULÁRIO DE ASSINATURA
+    st.subheader("Confirmação de Identidade")
     
     with st.form("aceite"):
-        nome_input = st.text_input("Seu Nome Completo")
-        cpf_input = st.text_input("Seu CPF (apenas números)")
-        check_termos = st.checkbox("Li o contrato acima e concordo com os termos.")
+        st.write("Para assinar, confirme seus dados exatos:")
+        c1, c2 = st.columns(2)
+        nome_input = c1.text_input("Nome Completo")
+        cpf_input = c2.text_input("CPF (apenas números)")
         
-        if st.form_submit_button("✍️ ASSINAR AGORA", use_container_width=True):
-            # Validação Rigorosa
+        st.markdown("<br>", unsafe_allow_html=True)
+        check_termos = st.checkbox("Declaro que li o contrato acima, concordo com todas as cláusulas e assino digitalmente este documento.")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        btn_assinar = st.form_submit_button("✍️ ASSINAR CONTRATO AGORA", use_container_width=True, type="primary")
+        
+        if btn_assinar:
+            # VALIDAÇÃO RIGOROSA
             cpf_limpo = ''.join(filter(str.isdigit, cpf_input))
             cpf_real = d['alunos']['cpf']
             nome_real = d['alunos']['nome_completo']
             
+            # Validação flexível de nome (remove espaços extras e ignora maiúsculas)
+            nome_valido = nome_input.strip().lower() == nome_real.strip().lower()
+            
             if cpf_limpo != cpf_real:
-                st.error("CPF incorreto.")
-            elif nome_input.lower().strip() != nome_real.lower().strip():
-                st.error(f"Nome incorreto. Digite: {nome_real}")
+                st.error("❌ CPF incorreto. Verifique seus dados.")
+            elif not nome_valido:
+                st.error(f"❌ Nome incorreto. Por favor, digite exatamente: {nome_real}")
             elif not check_termos:
-                st.error("Marque a caixa de aceite.")
+                st.warning("⚠️ Você precisa marcar a caixa de 'Declaro que li e concordo' para prosseguir.")
             else:
-                with st.spinner("Registrando assinatura forense..."):
-                    # Coleta Dados
+                with st.spinner("Registrando assinatura e carimbando documento..."):
+                    # Coleta Dados Forenses
                     fuso = pytz.timezone('America/Sao_Paulo')
                     agora = datetime.now(fuso)
                     ip = get_ip()
+                    
+                    # Gera Hash Único (ID + Hora + CPF + IP)
                     raw = f"{d['id']}{agora}{cpf_real}{ip}"
                     hash_ass = hashlib.sha256(raw.encode()).hexdigest().upper()
+                    
                     lk_origem = f"https://nexusmed-contratos.streamlit.app/?token={token}"
                     
                     meta = {
@@ -237,13 +278,20 @@ def tela_aceite_aluno(token):
                         "ip": ip, "link": lk_origem, "hash": hash_ass
                     }
                     
-                    # Carimba PDF
+                    # Backend: Carimba o PDF na nuvem
                     path_assinado = aplicar_carimbo_digital(d['caminho_arquivo'], meta)
                     
-                    # Salva
+                    # Backend: Atualiza Banco de Dados
                     registrar_aceite(d['id'], {
-                        "status": "assinado", "data_aceite": agora.isoformat(),
-                        "ip_aceite": ip, "hash_aceite": hash_ass,
-                        "recibo_aceite_texto": str(meta), "caminho_arquivo": path_assinado
+                        "status": "assinado", 
+                        "data_aceite": agora.isoformat(),
+                        "ip_aceite": ip, 
+                        "hash_aceite": hash_ass,
+                        "recibo_aceite_texto": str(meta), 
+                        "caminho_arquivo": path_assinado
                     })
-                    st.balloons(); st.success("Assinado!"); time.sleep(2); st.rerun()
+                    
+                    st.balloons()
+                    st.success("✅ Assinatura realizada com sucesso! A página irá recarregar.")
+                    time.sleep(3)
+                    st.rerun()
