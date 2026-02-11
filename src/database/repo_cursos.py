@@ -7,6 +7,7 @@ class CursoRepository:
 
     @staticmethod
     def listar_todos_com_turmas():
+        """Lista cursos e aninha as turmas relacionadas."""
         response = supabase.table("cursos")\
             .select("*, turmas(*)")\
             .order("nome")\
@@ -15,6 +16,7 @@ class CursoRepository:
 
     @staticmethod
     def listar_cursos_ativos():
+        """Lista apenas cursos ativos para o formulário de nova turma."""
         response = supabase.table("cursos")\
             .select("*")\
             .eq("ativo", True)\
@@ -28,28 +30,24 @@ class CursoRepository:
 
     @staticmethod
     def atualizar_curso(curso_id: int, dados: dict):
-        """Atualiza campos de um curso (ex: inativar, mudar preço)."""
+        """Atualiza dados do curso (nome, valor, status)."""
         return supabase.table("cursos").update(dados).eq("id", curso_id).execute()
 
     # --- Operações de Turmas ---
 
     @staticmethod
-    def listar_turmas_por_curso(curso_id: int, apenas_ativas=False):
+    def criar_turma(dados: dict):
+        return supabase.table("turmas").insert(dados).execute()
+
+    @staticmethod
+    def atualizar_turma(turma_id: int, dados: dict):
         """
-        Busca todas as turmas. 
-        Se apenas_ativas=True, filtra as inativas.
+        Atualiza dados da turma.
+        Usado para mudar data de fim, formato ou inativar (soft delete).
         """
-        query = supabase.table("turmas").select("*").eq("curso_id", curso_id).order("codigo_turma", desc=True)
-        
-        if apenas_ativas:
-            query = query.eq("ativo", True)
-            
-        return query.execute().data
+        return supabase.table("turmas").update(dados).eq("id", turma_id).execute()
 
     @staticmethod
     def inativar_turma(turma_id: int, status: bool):
-        """
-        Atualiza o status da turma (True = Ativa, False = Inativa).
-        Substitui o antigo 'deletar_turma'.
-        """
+        """Helper específico para mudar apenas o status."""
         return supabase.table("turmas").update({"ativo": status}).eq("id", turma_id).execute()
