@@ -15,6 +15,20 @@ LISTA_ESTADO_CIVIL = ["Solteiro(a)", "Casado(a)", "Divorciado(a)", "Viúvo(a)", 
 
 def main():
     st.title("👤 Gestão de Alunos")
+
+    # --- ÁREA DE DIAGNÓSTICO (Remova após corrigir) ---
+    with st.expander("🕵️ DEBUG: Ver Colunas do Banco"):
+        try:
+            from src.database.connection import supabase
+            # Tenta pegar 1 aluno qualquer para ver as chaves (colunas)
+            resp = supabase.table("alunos").select("*").limit(1).execute()
+            if resp.data:
+                st.write("Colunas encontradas:", list(resp.data[0].keys()))
+            else:
+                st.warning("Tabela vazia. Cadastre um aluno manualmente no Supabase para ver as colunas.")
+        except Exception as e:
+            st.error(f"Erro de conexão: {e}")
+    # --------------------------------------------------
     
     tab_listar, tab_cadastrar = st.tabs(["Lista de Alunos", "Cadastrar Novo Aluno"])
 
