@@ -1,110 +1,140 @@
 import streamlit as st
-import time
 import hashlib
-import pytz
 from datetime import datetime
-from src.repository import get_contrato_by_token, registrar_aceite
-from src.services import aplicar_carimbo_digital
+from src.database.repo_contratos import ContratoRepository
+from src.document_engine.processor import ContractProcessor
+from src.document_engine.pdf_converter import PDFManager
+from src.utils.formatters import format_currency, format_cpf, get_full_date_ptbr
 
-# --- CONFIGURAÇÃO VISUAL (ESCONDER MENU) ---
-st.set_page_config(page_title="Assinatura Digital", layout="wide", initial_sidebar_state="collapsed")
+# Configuração White Label: Esconde menus e barra lateral
+st.set_page_config(page_title="Assinatura de Contrato | NexusMed", layout="centered", initial_sidebar_state="collapsed")
 
 st.markdown("""
-<style>
-    [data-testid="stSidebar"] {display: none;} /* Esconde Barra Lateral */
-    #MainMenu {visibility: hidden;} /* Esconde Menu 3 pontos */
-    footer {visibility: hidden;} /* Esconde Rodapé */
-    .stApp {margin-top: -60px;} /* Sobe o conteúdo */
-</style>
-""", unsafe_allow_html=True)
+    <style>
+    [data-testid="stSidebar"] {display: none;}
+    [data-testid="stHeader"] {display: none;}
+    footer {visibility: hidden;}
+    </style>
+    """, unsafe_allow_html=True)
 
-# --- LÓGICA ---
-def get_ip():
-    try: return st.context.headers.get("X-Forwarded-For", "IP_DESCONHECIDO")
-    except: return "127.0.0.1"
+def main():
+    # 1. Validação do Token via URL (?token=...)
+    query_params = st.query_params
+    token = query_params.get("token")
 
-# Pega o token da URL
-token = st.query_params.get("token")
+    if not token:
+        st.error("Link de assinatura inválido. Por favor, solicite um novo link à administração.")
+        return
 
-if not token:
-    st.error("Link inválido. Token não encontrado.")
-    st.stop()
-
-d = get_contrato_by_token(token)
-
-if not d:
-    st.error("Contrato não encontrado ou link expirado.")
-    st.stop()
-
-# --- INTERFACE ---
-st.markdown("<h2 style='text-align: center;'>Assinatura Digital de Contrato</h2>", unsafe_allow_html=True)
-st.markdown("---")
-
-if d['status'] == 'assinado':
-    st.success(f"✅ Este contrato já foi assinado em {d.get('data_aceite')}.")
-    try:
-        from src.db import supabase
-        data_pdf = supabase.storage.from_("contratos").download(d['caminho_arquivo'])
-        st.download_button("📥 Baixar Contrato Assinado", data_pdf, "Contrato_Assinado.pdf", "application/pdf", use_container_width=True)
-    except: pass
-    st.stop()
-
-# Área de Visualização
-c1, c2 = st.columns([2, 1])
-with c1:
-    st.info("Por favor, leia o documento abaixo.")
-    try:
-        from src.db import supabase
-        data_pdf = supabase.storage.from_("contratos").download(d['caminho_arquivo'])
-        st.download_button("📄 CLIQUE PARA BAIXAR/LER O CONTRATO", data_pdf, "Minuta.pdf", "application/pdf", use_container_width=True)
-    except: st.warning("Erro ao carregar documento.")
-
-with c2:
-    st.markdown("### Seus Dados")
-    st.write(f"**Aluno:** {d['alunos']['nome_completo']}")
-    st.write(f"**CPF:** {d['alunos']['cpf']}")
-    st.write(f"**Curso:** {d['turmas']['codigo_turma']}")
+    # 2. Busca dados do contrato
+    contrato = ContratoRepository.buscar_por_token(token)
     
-    st.markdown("---")
-    with st.form("aceite"):
-        nome_input = st.text_input("Confirme seu Nome")
-        cpf_input = st.text_input("Confirme seu CPF")
-        check = st.checkbox("Li, concordo e assino digitalmente.")
+    if not contrato:
+        st.error("Contrato não encontrado.")
+        return
+
+    if contrato['status'] == 'Assinado':
+        st.success("✅ Este contrato já foi assinado e finalizado.")
+        st.info(f"Data do aceite: {datetime.fromisoformat(contrato['data_aceite']).strftime('%d/%m/%Y %H:%M')}")
+        return
+
+    st.title("🖋️ Assinatura Digital de Contrato")
+    st.write(f"Olá, **{contrato['alunos']['nome_completo']}**.")
+    st.write("Revise os detalhes do seu curso abaixo:")
+
+    # 3. Resumo para conferência
+    with st.container(border=True):
+        col1, col2 = st.columns(2)
+        col1.write(f"**Curso:** {contrato['turmas']['cursos']['nome']}")
+        col1.write(f"**Turma:** {contrato['turmas']['codigo_turma']}")
+        col2.write(f"**Investimento:** {format_currency(contrato['valor_final'])}")
+        col2.write(f"**Formato:** {contrato['formato_curso']}")
+
+    st.warning("⚠️ É obrigatório ler o contrato antes de prosseguir.")
+
+    # 4. Geração em Tempo Real para Download/Visualização
+    # (Usando o processador para gerar o DOCX e converter para PDF em memória)
+    try:
+        processor = ContractProcessor("assets/modelo_contrato_V2.docx")
         
-        if st.form_submit_button("✍️ ASSINAR AGORA", type="primary", use_container_width=True):
-            # Validação
-            cpf_limpo = ''.join(filter(str.isdigit, cpf_input))
-            cpf_real = d['alunos']['cpf']
-            nome_real = d['alunos']['nome_completo']
-            
-            if cpf_limpo != cpf_real:
-                st.error("CPF incorreto.")
-            elif nome_input.lower().strip() != nome_real.lower().strip():
-                st.error("Nome incorreto.")
-            elif not check:
-                st.error("Marque a caixa de aceite.")
-            else:
-                with st.spinner("Processando assinatura..."):
-                    # Carimbo e Registro
-                    fuso = pytz.timezone('America/Sao_Paulo')
-                    agora = datetime.now(fuso)
-                    ip = get_ip()
-                    raw = f"{d['id']}{agora}{cpf_real}{ip}"
-                    hash_ass = hashlib.sha256(raw.encode()).hexdigest().upper()
-                    
-                    lk_origem = f"https://nexusmed-contratos.streamlit.app/?token={token}"
-                    meta = {
-                        "token": d['id'].split('-')[0], "data_hora": agora.strftime('%d/%m/%Y %H:%M'),
-                        "nome": nome_real, "cpf": cpf_real, "ip": ip, "hash": hash_ass
-                    }
-                    
-                    path_assinado = aplicar_carimbo_digital(d['caminho_arquivo'], meta)
-                    
-                    registrar_aceite(d['id'], {
-                        "status": "assinado", "data_aceite": agora.isoformat(),
-                        "ip_aceite": ip, "hash_aceite": hash_ass,
-                        "recibo_aceite_texto": str(meta), "caminho_arquivo": path_assinado
-                    })
-                    st.success("Sucesso! Recarregando...")
-                    time.sleep(2)
-                    st.rerun()
+        # Contexto simplificado para o template
+        context = {
+            "nome_completo": contrato['alunos']['nome_completo'],
+            "cpf": format_cpf(contrato['alunos']['cpf']),
+            "email": contrato['alunos']['email'],
+            "curso_nome": contrato['turmas']['cursos']['nome'],
+            "valor_total": format_currency(contrato['valor_final']),
+            "data_hoje": get_full_date_ptbr()
+        }
+        
+        # Mock de parcelas para a tabela
+        payment_rows = [
+            {"parcela": "Entrada", "vencimento": "Imediato", "valor": format_currency(contrato['entrada_valor'])},
+            {"parcela": f"{contrato['saldo_qtd_parcelas']}x Saldo", "vencimento": "Mensal", "valor": format_currency(contrato['saldo_valor'] / contrato['saldo_qtd_parcelas'])}
+        ]
+
+        docx_buffer = processor.generate_docx(context, payment_rows)
+        pdf_buffer = PDFManager.convert_docx_to_pdf(docx_buffer)
+
+        st.download_button(
+            label="📄 Baixar Contrato para Leitura (PDF)",
+            data=pdf_buffer,
+            file_name=f"Contrato_NexusMed_{contrato['alunos']['nome_completo']}.pdf",
+            mime="application/pdf"
+        )
+    except Exception as e:
+        st.error(f"Erro ao gerar visualização: {e}")
+
+    # 5. Validação de Identidade
+    st.write("---")
+    st.subheader("Confirmação de Identidade")
+    
+    check_nome = st.text_input("Confirme seu Nome Completo")
+    check_cpf = st.text_input("Confirme seu CPF (apenas números)")
+    
+    termos = st.checkbox("Li e concordo com todos os termos e cláusulas do contrato.")
+
+    if st.button("ASSINAR CONTRATO AGORA", type="primary", use_container_width=True):
+        # Validação rigorosa
+        if check_nome.strip().lower() != contrato['alunos']['nome_completo'].lower():
+            st.error("O nome digitado não confere com o contrato.")
+        elif check_cpf.strip() != contrato['alunos']['cpf']:
+            st.error("O CPF digitado não confere com o contrato.")
+        elif not termos:
+            st.error("Você precisa aceitar os termos para prosseguir.")
+        else:
+            # Lógica de Carimbo e Finalização
+            with st.spinner("Processando assinatura digital..."):
+                ip_usuario = "127.0.0.1" # Em prod: usar headers para pegar IP real
+                timestamp = datetime.now().isoformat()
+                
+                # Gera Hash de Autenticidade único para este aceite
+                hash_base = f"{token}-{timestamp}-{check_cpf}"
+                hash_auth = hashlib.sha256(hash_base.encode()).hexdigest()[:16].upper()
+
+                # Aplica o carimbo no PDF
+                stamp = PDFManager.create_signature_stamp(
+                    datetime.now(), check_nome, check_cpf, ip_usuario, hash_auth
+                )
+                pdf_final = PDFManager.apply_stamp_to_pdf(pdf_buffer, stamp)
+
+                # Salva no Banco
+                payload = {
+                    "ip_aceite": ip_usuario,
+                    "hash_aceite": hash_auth,
+                    "recibo_aceite_texto": f"Assinado via Portal NexusMed por {check_nome}",
+                }
+                ContratoRepository.registrar_assinatura(contrato['id'], payload)
+
+                st.success("🎉 Contrato assinado com sucesso!")
+                
+                # Disponibiliza o contrato já carimbado
+                st.download_button(
+                    label="📥 Baixar meu Contrato Assinado",
+                    data=pdf_final,
+                    file_name=f"CONTRATO_ASSINADO_NEXUSMED.pdf",
+                    mime="application/pdf"
+                )
+
+if __name__ == "__main__":
+    main()
