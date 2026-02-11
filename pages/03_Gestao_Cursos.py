@@ -70,10 +70,10 @@ def main():
                 
                 col1, col2 = st.columns(2)
                 cod_turma = col1.text_input("Código da Turma (Ex: MED-2024-01)")
-                formato = col2.selectbox("Formato", ["Presencial", "Online", "Híbrido"])
+                formato = col1.selectbox("Formato", ["Presencial", "Digital", "Híbrido"])
                 
                 data_in = col1.date_input("Data de Início")
-                data_fim = col2.date_input("Data de Término")
+                data_fim = col1.date_input("Data de Término")
                 
                 if st.form_submit_button("Abrir Turma"):
                     if cod_turma:
