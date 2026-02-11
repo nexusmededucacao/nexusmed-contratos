@@ -188,22 +188,6 @@ def gerar_contrato_pdf(aluno, turma, curso, contrato, datas_info):
         return None
 
 # --- CARIMBO E EMAIL (Mantidos) ---
-def aplicar_carimbo_digital(path, meta):
-    if not path.endswith(".pdf"): return path
-    try:
-        d = supabase.storage.from_("contratos").download(path)
-        r = PdfReader(io.BytesIO(d)); w = PdfWriter()
-        p = io.BytesIO(); c = canvas.Canvas(p, pagesize=letter)
-        c.setFont("Helvetica",6); c.setFillColorRGB(0.5,0.5,0.5,0.5)
-        txt = f"ACEITE DIGITAL | {meta['data_hora']} | {meta['nome']} | CPF:{meta['cpf']} | IP:{meta['ip']} | Hash:{meta['hash'][:10]}..."
-        c.drawString(20,20,txt); c.save(); p.seek(0)
-        wm = PdfReader(p).pages[0]
-        for pg in r.pages: pg.merge_page(wm); w.add_page(pg)
-        out = io.BytesIO(); w.write(out); out.seek(0)
-        np = path.replace(".pdf","_assinado.pdf")
-        supabase.storage.from_("contratos").upload(np, out, {"content-type":"application/pdf","upsert":"true"})
-        return np
-    except: return path
 
 def enviar_email(dest, nome, link):
     try:
