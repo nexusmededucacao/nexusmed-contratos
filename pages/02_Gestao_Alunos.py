@@ -26,7 +26,7 @@ def main():
     
     tab_listar, tab_cadastrar = st.tabs(["Lista de Alunos", "Cadastrar Novo Aluno"])
 
-    # --- ABA 1: LISTA E BUSCA ---
+    # --- ABA 1: LISTA (FOCO EM EXIBIÇÃO VERTICAL) ---
     with tab_listar:
         st.subheader("Consultar Alunos")
         termo_busca = st.text_input("Buscar por Nome ou CPF", placeholder="Digite aqui...")
@@ -41,106 +41,88 @@ def main():
 
         st.divider()
 
-        if isinstance(alunos, list):
-            if not alunos:
-                st.info("Nenhum registro encontrado.")
-            else:
-                st.caption(f"Encontrados: {len(alunos)} registros.")
+        if isinstance(alunos, list) and alunos:
+            st.caption(f"Encontrados: {len(alunos)} registros.")
+            
+            for aluno in alunos:
+                if not isinstance(aluno, dict): continue
+
+                nome = aluno.get('nome_completo') or "Nome não informado"
+                cpf = format_cpf(aluno.get('cpf', ''))
                 
-                for aluno in alunos:
-                    if not isinstance(aluno, dict): continue
-
-                    nome_display = aluno.get('nome_completo') or "Nome não informado"
-                    cpf_display = format_cpf(aluno.get('cpf', '00000000000'))
+                with st.expander(f"👤 {nome} | CPF: {cpf}"):
+                    # --- DADOS UM EMBAIXO DO OUTRO (SEM COLUNAS) ---
                     
-                    with st.expander(f"👤 {nome_display} | CPF: {cpf_display}"):
-                        
-                        # --- EXIBIÇÃO VERTICAL (UM EMBAIXO DO OUTRO) ---
-                        st.markdown("### 📄 Dados Pessoais")
-                        st.write(f"**Nascimento:** {formatar_data_br(aluno.get('data_nascimento'))}")
-                        st.write(f"**Nacionalidade:** {aluno.get('nacionalidade', '-')}")
-                        st.write(f"**Estado Civil:** {aluno.get('estado_civil', '-')}")
-                        st.write(f"**Email:** {aluno.get('email', '-')}")
-                        st.write(f"**Telefone:** {format_phone(aluno.get('telefone', ''))}")
+                    st.markdown("#### 📄 Dados Pessoais")
+                    st.markdown(f"**Nascimento:** {formatar_data_br(aluno.get('data_nascimento'))}")
+                    st.markdown(f"**Nacionalidade:** {aluno.get('nacionalidade', '-')}")
+                    st.markdown(f"**Estado Civil:** {aluno.get('estado_civil', '-')}")
+                    st.markdown(f"**Email:** {aluno.get('email', '-')}")
+                    st.markdown(f"**Telefone:** {format_phone(aluno.get('telefone', ''))}")
 
-                        st.markdown("---")
-                        st.markdown("### 📍 Endereço")
-                        st.write(f"**Logradouro:** {aluno.get('logradouro', '-')}, {aluno.get('numero', '-')}")
-                        st.write(f"**Complemento:** {aluno.get('complemento', '-')}")
-                        st.write(f"**Bairro:** {aluno.get('bairro', '-')}")
-                        st.write(f"**Cidade/UF:** {aluno.get('cidade', '-')}/{aluno.get('uf', '-')}")
-                        st.write(f"**CEP:** {aluno.get('cep', '-')}")
+                    st.markdown("---")
+                    st.markdown("#### 📍 Endereço")
+                    st.markdown(f"**Logradouro:** {aluno.get('logradouro', '-')}, {aluno.get('numero', '-')}")
+                    st.markdown(f"**Complemento:** {aluno.get('complemento', '-')}")
+                    st.markdown(f"**Bairro:** {aluno.get('bairro', '-')}")
+                    st.markdown(f"**Cidade/UF:** {aluno.get('cidade', '-')}/{aluno.get('uf', '-')}")
+                    st.markdown(f"**CEP:** {aluno.get('cep', '-')}")
 
-                        st.markdown("---")
-                        st.markdown("### 💼 Dados Profissionais")
-                        st.write(f"**CRM:** {aluno.get('crm', '-')}")
-                        st.write(f"**Área de Formação:** {aluno.get('area_formacao', '-')}")
-                        
-                        st.write("") 
+                    st.markdown("---")
+                    st.markdown("#### 💼 Profissional")
+                    st.markdown(f"**CRM:** {aluno.get('crm', '-')}")
+                    st.markdown(f"**Área de Formação:** {aluno.get('area_formacao', '-')}")
+                    
+                    st.write("") 
 
-                        # --- BOTÃO DE EDIÇÃO ---
-                        with st.popover("✏️ Editar Cadastro Completo", use_container_width=True):
-                            st.write(f"Editando: **{nome_display}**")
-                            with st.form(key=f"edit_aluno_{aluno.get('id')}"):
-                                # Pessoal
-                                e_nome = st.text_input("Nome Completo", value=aluno.get('nome_completo', ''))
-                                e_email = st.text_input("Email", value=aluno.get('email', ''))
-                                e_tel = st.text_input("Telefone", value=aluno.get('telefone', ''))
-                                
-                                try:
-                                    dt_val = datetime.fromisoformat(aluno.get('data_nascimento')).date() if aluno.get('data_nascimento') else None
-                                except: dt_val = None
-                                e_nasc = st.date_input("Nascimento", value=dt_val, min_value=date(1940, 1, 1), max_value=date.today())
-                                
-                                e_nac = st.text_input("Nacionalidade", value=aluno.get('nacionalidade', 'Brasileira'))
-                                est_civil = aluno.get('estado_civil', '')
-                                idx_civil = LISTA_ESTADO_CIVIL.index(est_civil) if est_civil in LISTA_ESTADO_CIVIL else 0
-                                e_civil = st.selectbox("Estado Civil", LISTA_ESTADO_CIVIL, index=idx_civil)
+                    # Botão de Edição no final do cartão
+                    with st.popover("✏️ Editar Cadastro Completo", use_container_width=True):
+                        with st.form(key=f"edit_{aluno.get('id')}"):
+                            # Formulário também segue o fluxo vertical
+                            e_nome = st.text_input("Nome Completo", value=aluno.get('nome_completo', ''))
+                            e_email = st.text_input("Email", value=aluno.get('email', ''))
+                            e_tel = st.text_input("Telefone", value=aluno.get('telefone', ''))
+                            
+                            try:
+                                dt_atual = datetime.fromisoformat(aluno.get('data_nascimento')).date() if aluno.get('data_nascimento') else None
+                            except: dt_atual = None
+                            
+                            e_nasc = st.date_input("Nascimento", value=dt_atual, min_value=date(1940, 1, 1))
+                            e_nac = st.text_input("Nacionalidade", value=aluno.get('nacionalidade', 'Brasileira'))
+                            
+                            civ_at = aluno.get('estado_civil', '')
+                            idx_civ = LISTA_ESTADO_CIVIL.index(civ_at) if civ_at in LISTA_ESTADO_CIVIL else 0
+                            e_civil = st.selectbox("Estado Civil", LISTA_ESTADO_CIVIL, index=idx_civ)
 
-                                # Endereço
-                                st.divider()
-                                st.caption("Endereço")
-                                e_cep = st.text_input("CEP", value=aluno.get('cep', ''))
-                                e_log = st.text_input("Logradouro", value=aluno.get('logradouro', ''))
-                                e_num = st.text_input("Número", value=aluno.get('numero', ''))
-                                e_comp = st.text_input("Complemento", value=aluno.get('complemento', ''))
-                                e_bairro = st.text_input("Bairro", value=aluno.get('bairro', ''))
-                                e_cidade = st.text_input("Cidade", value=aluno.get('cidade', ''))
-                                
-                                uf_bd = aluno.get('uf', '')
-                                idx_uf = LISTA_ESTADOS.index(uf_bd) if uf_bd in LISTA_ESTADOS else 0
-                                e_uf = st.selectbox("UF", LISTA_ESTADOS, index=idx_uf)
+                            st.divider()
+                            e_log = st.text_input("Logradouro", value=aluno.get('logradouro', ''))
+                            e_num = st.text_input("Número", value=aluno.get('numero', ''))
+                            e_comp = st.text_input("Complemento", value=aluno.get('complemento', ''))
+                            e_bai = st.text_input("Bairro", value=aluno.get('bairro', ''))
+                            e_cid = st.text_input("Cidade", value=aluno.get('cidade', ''))
+                            
+                            uf_at = aluno.get('uf', '')
+                            idx_uf = LISTA_ESTADOS.index(uf_at) if uf_at in LISTA_ESTADOS else 0
+                            e_uf = st.selectbox("UF", LISTA_ESTADOS, index=idx_uf)
 
-                                # Profissional
-                                st.divider()
-                                st.caption("Profissional")
-                                e_crm = st.text_input("CRM", value=aluno.get('crm', ''))
-                                e_area = st.text_input("Área Formação", value=aluno.get('area_formacao', ''))
+                            st.divider()
+                            e_crm = st.text_input("CRM", value=aluno.get('crm', ''))
+                            e_area = st.text_input("Área Formação", value=aluno.get('area_formacao', ''))
 
-                                if st.form_submit_button("💾 Salvar Alterações"):
-                                    dados_update = {
-                                        "nome_completo": e_nome,
-                                        "data_nascimento": e_nasc.isoformat() if e_nasc else None,
-                                        "nacionalidade": e_nac,
-                                        "estado_civil": e_civil,
-                                        "telefone": e_tel,
-                                        "email": e_email,
-                                        "cep": e_cep,
-                                        "logradouro": e_log,
-                                        "numero": e_num,
-                                        "complemento": e_comp,
-                                        "bairro": e_bairro,
-                                        "cidade": e_cidade,
-                                        "uf": e_uf,
-                                        "crm": e_crm,
-                                        "area_formacao": e_area
-                                    }
-                                    AlunoRepository.atualizar_aluno(aluno['id'], dados_update)
-                                    st.success("Atualizado!")
-                                    time.sleep(1.5)
-                                    st.rerun()
+                            if st.form_submit_button("💾 Salvar Alterações"):
+                                dados = {
+                                    "nome_completo": e_nome, "email": e_email, "telefone": e_tel,
+                                    "data_nascimento": e_nasc.isoformat(), "nacionalidade": e_nac,
+                                    "estado_civil": e_civil, "logradouro": e_log, "numero": e_num,
+                                    "complemento": e_comp, "bairro": e_bai, "cidade": e_cid,
+                                    "uf": e_uf, "crm": e_crm, "area_formacao": e_area
+                                }
+                                AlunoRepository.atualizar_aluno(aluno['id'], dados)
+                                st.success("Atualizado!")
+                                time.sleep(1)
+                                st.rerun()
         else:
-            st.warning("Não foi possível carregar a lista de alunos.")
+            st.info("Nenhum aluno encontrado.")
 
     # --- ABA 2: CADASTRAR NOVO ALUNO (Mantido Vertical) ---
     with tab_cadastrar:
