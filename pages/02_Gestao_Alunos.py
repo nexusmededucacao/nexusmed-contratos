@@ -35,8 +35,12 @@ def main():
         if alunos:
             st.caption(f"Encontrados: {len(alunos)} registros.")
             for aluno in alunos:
+                # BLINDAGEM: Usa .get() para evitar erro se a coluna não existir ou tiver outro nome
+                nome_display = aluno.get('nome_completo', 'Sem Nome (Verificar Banco)')
+                cpf_display = format_cpf(aluno.get('cpf', '00000000000'))
+                
                 # Cabeçalho do Card
-                titulo = f"{aluno['nome_completo']} - CPF: {format_cpf(aluno['cpf'])}"
+                titulo = f"{nome_display} - CPF: {cpf_display}"
                 
                 with st.expander(titulo):
                     # Visualização Rápida
@@ -49,22 +53,24 @@ def main():
 
                     # --- FORMULÁRIO DE EDIÇÃO (Pop-over) ---
                     with st.popover("✏️ Editar Cadastro Completo"):
-                        st.write(f"Editando: **{aluno['nome_completo']}**")
+                        st.write(f"Editando: **{nome_display}**")
                         
                         with st.form(key=f"edit_aluno_{aluno['id']}"):
                             # 1. Dados Pessoais
                             st.caption("Dados Pessoais")
-                            e_nome = st.text_input("Nome Completo", value=aluno['nome_completo'])
+                            e_nome = st.text_input("Nome Completo", value=aluno.get('nome_completo', ''))
                             
                             ec1, ec2 = st.columns(2)
-                            # Tratamento de data para não quebrar se for None
-                            dt_val = datetime.fromisoformat(aluno['data_nascimento']).date() if aluno.get('data_nascimento') else None
+                            # Tratamento de data seguro
+                            data_bd = aluno.get('data_nascimento')
+                            dt_val = datetime.fromisoformat(data_bd).date() if data_bd else None
                             e_nasc = ec1.date_input("Nascimento", value=dt_val, min_value=date(1940, 1, 1), max_value=date.today())
                             e_nac = ec2.text_input("Nacionalidade", value=aluno.get('nacionalidade', 'Brasileira'))
                             
                             ec3, ec4 = st.columns(2)
                             # Indexação segura para dropdowns
-                            idx_civil = LISTA_ESTADO_CIVIL.index(aluno['estado_civil']) if aluno.get('estado_civil') in LISTA_ESTADO_CIVIL else 0
+                            est_civil_bd = aluno.get('estado_civil', '')
+                            idx_civil = LISTA_ESTADO_CIVIL.index(est_civil_bd) if est_civil_bd in LISTA_ESTADO_CIVIL else 0
                             e_civil = ec3.selectbox("Estado Civil", LISTA_ESTADO_CIVIL, index=idx_civil)
                             e_tel = ec4.text_input("Telefone", value=aluno.get('telefone', ''))
                             
@@ -81,7 +87,9 @@ def main():
                             el3, el4, el5 = st.columns([2, 2, 1])
                             e_bairro = el3.text_input("Bairro", value=aluno.get('bairro', ''))
                             e_cidade = el4.text_input("Cidade", value=aluno.get('cidade', ''))
-                            idx_uf = LISTA_ESTADOS.index(aluno['uf']) if aluno.get('uf') in LISTA_ESTADOS else 0
+                            
+                            uf_bd = aluno.get('uf', '')
+                            idx_uf = LISTA_ESTADOS.index(uf_bd) if uf_bd in LISTA_ESTADOS else 0
                             e_uf = el5.selectbox("UF", LISTA_ESTADOS, index=idx_uf)
 
                             # 3. Profissional
@@ -127,8 +135,9 @@ def main():
             existe = AlunoRepository.buscar_por_cpf(cpf_input)
             
             if existe:
-                st.warning(f"⚠️ O aluno **{existe[0]['nome_completo']}** já possui este CPF cadastrado.")
-                st.info("Utilize a aba **'Lista de Alunos'** para buscar e editar este cadastro.")
+                # --- CORREÇÃO FEITA AQUI ---
+                # Mensagem fixa e amigável, sem acessar colunas dinâmicas que podem falhar
+                st.warning("⚠️ Aluno já cadastrado. Para atualizar o cadastro, acesse a aba 'Lista de Alunos'.")
             else:
                 st.success("CPF Novo! Preencha os dados abaixo.")
                 
