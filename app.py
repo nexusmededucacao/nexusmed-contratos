@@ -1,35 +1,35 @@
 import streamlit as st
 from src.auth import login_usuario
-from streamlit.source_util import get_pages
 
-st.set_page_config(page_title="Debug NexusMed", layout="centered")
+# Configuração da Página Inicial
+st.set_page_config(page_title="NexusMed Portal", layout="centered")
 
-st.title("🕵️ Debugger de Páginas")
+# 1. ROTEAMENTO DE ASSINATURA (ALUNO)
+# Se houver um token na URL, vai para a página de Assinatura
+if "token" in st.query_params:
+    token = st.query_params["token"]
+    st.switch_page("pages/Assinatura.py")
 
-# Imprime o que o Streamlit está enxergando na pasta pages
-st.write("### Páginas Encontradas:")
-pages = get_pages("app.py")
-st.write(pages)
-
-st.divider()
-
-# Tenta fazer o login para testar
+# 2. TELA DE LOGIN (ADMIN)
 if 'usuario' not in st.session_state:
     st.session_state['usuario'] = None
+
+if st.session_state['usuario']:
+    # Se já estiver logado, vai para a página principal (NOME EXATO DO ARQUIVO)
+    st.switch_page("pages/01_Gerar_Contrato.py")
+
+st.markdown("<h1 style='text-align: center;'>🔒 NexusMed Portal</h1>", unsafe_allow_html=True)
+st.markdown("---")
 
 c1, c2, c3 = st.columns([1, 2, 1])
 with c2:
     with st.form("login_form"):
         email = st.text_input("E-mail")
         senha = st.text_input("Senha", type="password")
-        if st.form_submit_button("Entrar"):
+        if st.form_submit_button("Entrar", use_container_width=True):
             user = login_usuario(email, senha)
             if user:
                 st.session_state['usuario'] = user
-                st.success("Logado! Tente clicar no link abaixo.")
+                st.rerun()
             else:
-                st.error("Erro login")
-
-if st.session_state['usuario']:
-    # Link manual para testar se o arquivo abre
-    st.page_link("pages/01_Gerar_Contrato.py", label="IR PARA CONTRATOS", icon="📝")
+                st.error("E-mail ou senha inválidos.")
