@@ -115,7 +115,7 @@ def main():
 
         st.divider()
 
-        # 2. ENTRADA (LÓGICA AJUSTADA: Tudo Editável)
+        # 2. ENTRADA (LÓGICA AJUSTADA: Alinhamento Correto)
         st.markdown("#### 1. Entrada")
         ce1, ce2 = st.columns([2, 1])
         v_entrada_total = ce1.number_input("Valor Total da Entrada", min_value=0.0, max_value=valor_final, value=0.0, step=50.0)
@@ -129,10 +129,13 @@ def main():
             
             # --- Parcela 1 (Editável) ---
             with st.container(border=True):
+                # Título fora das colunas para não quebrar o alinhamento
+                st.markdown("**1ª Parcela**")
+                
                 c_ep1, c_ep2, c_ep3 = st.columns(3)
                 v_sugestao = v_entrada_total / q_entrada
                 
-                c_ep1.markdown("**1ª Parcela**")
+                # Agora os inputs estão todos na mesma linha horizontal
                 v_p1 = c_ep1.number_input("Valor", value=v_sugestao, step=10.0, key="v_e1")
                 d_p1 = c_ep2.date_input("Vencimento", value=date.today(), key="d_e1")
                 f_p1 = c_ep3.selectbox("Forma", opcoes_pagamento, key="f_e1")
@@ -144,31 +147,30 @@ def main():
             
             if q_entrada > 1:
                 qtd_restante = q_entrada - 1
-                # Divide o resto igualmente
                 val_restante_base = resto / qtd_restante if resto > 0 else 0
                 
                 for i in range(qtd_restante):
                     n_parc = i + 2
                     
                     with st.container(border=True):
+                        st.markdown(f"**{n_parc}ª Parcela**") # Título acima para manter padrão
                         col_a, col_b, col_c = st.columns(3)
                         
-                        col_a.markdown(f"**{n_parc}ª Parcela**")
-                        # Valor calculado automaticamente para fechar a conta (apenas leitura ou editável se preferir)
-                        col_a.caption(f"Valor Calculado: {format_currency(val_restante_base)}")
+                        # Valor calculado mas editável se o usuário quiser ajustar centavos
+                        val_real = col_a.number_input("Valor", value=val_restante_base, step=10.0, key=f"v_e{n_parc}")
                         
-                        # Data Editável (Sugere +30 dias, mas usuário muda)
+                        # Data Editável
                         d_sugestao = d_p1 + relativedelta(months=i+1)
                         d_real = col_b.date_input(f"Vencimento", value=d_sugestao, key=f"d_e{n_parc}")
                         
-                        # Forma Editável (Sugere a mesma da anterior, mas usuário muda)
+                        # Forma Editável
                         idx_forma = opcoes_pagamento.index(f_p1) if f_p1 in opcoes_pagamento else 0
                         f_real = col_c.selectbox(f"Forma", opcoes_pagamento, index=idx_forma, key=f"f_e{n_parc}")
                         
                         lista_entrada.append({
                             "n": n_parc, 
                             "vencimento": d_real, 
-                            "valor": val_restante_base, 
+                            "valor": val_real, 
                             "forma": f_real 
                         })
             
@@ -177,7 +179,7 @@ def main():
             if abs(soma_ent - v_entrada_total) > 0.10:
                 st.warning(f"⚠️ A soma das parcelas (R$ {soma_ent:.2f}) difere do Total da Entrada.")
 
-        # 3. SALDO RESTANTE (Lógica Mantida: Automático)
+        # 3. SALDO RESTANTE (Lógica Mantida)
         saldo = valor_final - v_entrada_total
         lista_saldo = []
         
@@ -263,7 +265,6 @@ def main():
         st.success("Contrato Criado com Sucesso!")
         
         token = st.session_state.get('ultimo_token', '')
-        # Ajuste para sua URL real
         link = f"https://nexusmed-portal.streamlit.app/Assinatura?token={token}"
         
         st.markdown("### 🔗 Link para o Aluno")
