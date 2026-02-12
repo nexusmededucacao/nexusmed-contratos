@@ -1,6 +1,8 @@
 import streamlit as st
 import uuid
-from datetime import datetime
+import json
+from datetime import date, datetime
+from dateutil.relativedelta import relativedelta
 from src.database.repo_alunos import AlunoRepository
 from src.database.repo_cursos import CursoRepository
 from src.database.repo_contratos import ContratoRepository
@@ -13,176 +15,242 @@ if not st.session_state.get("authenticated"):
 
 def main():
     st.title("📄 Gerador de Contratos")
-    st.write("Siga os passos abaixo para criar um novo contrato e enviá-lo para assinatura.")
+    
+    # Inicializa variáveis de sessão
+    if "step" not in st.session_state: st.session_state.step = 1
+    if "form_data" not in st.session_state: st.session_state.form_data = {}
 
-    # Inicialização do Passo no Session State
-    if "step" not in st.session_state:
-        st.session_state.step = 1
-    if "form_data" not in st.session_state:
-        st.session_state.form_data = {}
-
-    # --- PASSO 1: SELEÇÃO DE ALUNO (CORRIGIDO) ---
+    # --- PASSO 1: SELEÇÃO DE ALUNO ---
     if st.session_state.step == 1:
         st.subheader("Etapa 1: Selecionar Aluno")
-        busca = st.text_input("Buscar Aluno por Nome ou CPF", placeholder="Digite Nome ou CPF...")
+        busca = st.text_input("Buscar Aluno por Nome ou CPF", placeholder="Digite...")
         
         if busca:
-            # --- LÓGICA DE BUSCA HÍBRIDA ---
-            # Se o usuário digitou números, tentamos buscar pelo CPF primeiro
+            # Lógica de Busca Híbrida
             if any(char.isdigit() for char in busca):
                 alunos = AlunoRepository.buscar_por_cpf(busca)
-                # Se não achou por CPF, tenta por nome (caso seja um nome com números)
-                if not alunos:
-                    alunos = AlunoRepository.filtrar_por_nome(busca)
+                if not alunos: alunos = AlunoRepository.filtrar_por_nome(busca)
             else:
-                # Se não tem números, busca apenas por nome
                 alunos = AlunoRepository.filtrar_por_nome(busca)
-            # -------------------------------
 
             if alunos:
-                st.info(f"Encontrados: {len(alunos)} alunos.")
+                st.success(f"{len(alunos)} aluno(s) encontrado(s).")
                 for a in alunos:
-                    # Proteção para garantir que 'a' é um dicionário válido
                     if not isinstance(a, dict): continue
-
-                    col1, col2 = st.columns([3, 1])
                     
-                    # Formatação segura para exibição
-                    nome = a.get('nome_completo', 'Sem Nome')
-                    cpf_fmt = format_cpf(a.get('cpf', ''))
-                    
-                    col1.write(f"**{nome}** - CPF: {cpf_fmt}")
-                    
-                    if col2.button("Selecionar", key=f"sel_aluno_{a.get('id')}"):
-                        st.session_state.form_data['aluno'] = a
-                        st.session_state.step = 2
-                        st.rerun()
+                    with st.container(border=True):
+                        c1, c2 = st.columns([3, 1])
+                        c1.markdown(f"**{a.get('nome_completo')}**")
+                        c1.caption(f"CPF: {format_cpf(a.get('cpf'))} | Email: {a.get('email')}")
+                        
+                        if c2.button("Selecionar", key=f"sel_{a['id']}"):
+                            st.session_state.form_data['aluno'] = a
+                            st.session_state.step = 2
+                            st.rerun()
             else:
                 st.warning("Nenhum aluno encontrado.")
                 
-        st.markdown("---")
-        st.info("Dica: Cadastre o aluno na página de Gestão de Alunos caso não o encontre.")
+        st.info("Dica: Se não encontrar, vá em 'Gestão de Alunos' para cadastrar.")
 
-    # --- PASSO 2: SELEÇÃO DE CURSO E TURMA ---
+    # --- PASSO 2: CURSO E TURMA ---
     elif st.session_state.step == 2:
         st.subheader("Etapa 2: Curso e Turma")
-        st.write(f"Aluno selecionado: **{st.session_state.form_data['aluno']['nome_completo']}**")
+        aluno = st.session_state.form_data.get('aluno', {})
+        st.write(f"👤 Aluno: **{aluno.get('nome_completo')}**")
         
         cursos = CursoRepository.listar_todos_com_turmas()
-        
         if not cursos:
             st.error("Nenhum curso cadastrado.")
-            if st.button("Voltar"):
-                st.session_state.step = 1
-                st.rerun()
             st.stop()
-
-        lista_cursos = {c['nome']: c for c in cursos}
+            
+        map_cursos = {c['nome']: c for c in cursos}
+        sel_curso = st.selectbox("Selecione o Curso", [""] + list(map_cursos.keys()))
         
-        curso_sel_nome = st.selectbox("Escolha o Curso", options=[""] + list(lista_cursos.keys()))
-        
-        if curso_sel_nome:
-            curso_data = lista_cursos[curso_sel_nome]
-            turmas = curso_data.get('turmas', [])
+        if sel_curso:
+            curso_dados = map_cursos[sel_curso]
+            turmas = curso_dados.get('turmas', [])
             
             if turmas:
-                lista_turmas = {f"{t['codigo_turma']} ({t.get('formato', 'Presencial')})": t for t in turmas}
-                turma_sel_label = st.selectbox("Escolha a Turma", options=list(lista_turmas.keys()))
+                map_turmas = {f"{t['codigo_turma']} ({t.get('formato','-')})": t for t in turmas}
+                sel_turma = st.selectbox("Selecione a Turma", list(map_turmas.keys()))
                 
-                if st.button("Confirmar Curso e Turma"):
-                    st.session_state.form_data['curso'] = curso_data
-                    st.session_state.form_data['turma'] = lista_turmas[turma_sel_label]
+                if st.button("Confirmar e Avançar"):
+                    st.session_state.form_data['curso'] = curso_dados
+                    st.session_state.form_data['turma'] = map_turmas[sel_turma]
                     st.session_state.step = 3
                     st.rerun()
             else:
-                st.error("Este curso não possui turmas abertas.")
+                st.warning("Curso sem turmas abertas.")
         
         if st.button("Voltar"):
             st.session_state.step = 1
             st.rerun()
 
-    # --- PASSO 3: CONDIÇÕES FINANCEIRAS ---
+    # --- PASSO 3: FINANCEIRO (LÓGICA FINAL) ---
     elif st.session_state.step == 3:
         st.subheader("Etapa 3: Financeiro")
         
-        # Recupera valor bruto (garante float)
-        val_base = float(st.session_state.form_data['curso'].get('valor_bruto', 0))
+        # 1. VALORES DO CURSO
+        curso = st.session_state.form_data['curso']
+        valor_bruto = float(curso.get('valor_bruto', 0))
         
-        col1, col2 = st.columns(2)
-        desc_perc = col1.number_input("Desconto (%)", min_value=0.0, max_value=100.0, value=0.0, step=1.0)
-        valor_material = col2.number_input("Valor Material (R$)", min_value=0.0, value=0.0, step=10.0)
+        # Regra: Material é 30% do Bruto (Apenas visualização)
+        valor_material_calc = valor_bruto * 0.30
         
-        valor_final = val_base * (1 - (desc_perc/100))
-        st.info(f"Valor Original: {format_currency(val_base)} | **Valor Final: {format_currency(valor_final)}**")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Valor Curso (Bruto)", format_currency(valor_bruto))
+        c2.metric("Material Incluso (30%)", format_currency(valor_material_calc))
+        
+        percent_desc = c3.number_input("Desconto (%)", 0.0, 100.0, 0.0, step=1.0)
+        
+        # Valor Final = Bruto - Desconto
+        valor_final = valor_bruto * (1 - (percent_desc/100))
+        
+        st.markdown(f"""
+        <div style="background-color: #dcfce7; padding: 15px; border-radius: 8px; border: 1px solid #22c55e; margin-bottom: 20px;">
+            <h3 style="margin:0; color: #14532d;">Valor Final: {format_currency(valor_final)}</h3>
+            <small style="color: #166534;">Este é o valor total a ser pago pelo aluno (Serviço + Material).</small>
+        </div>
+        """, unsafe_allow_html=True)
 
-        st.write("---")
-        col_ent, col_sal = st.columns(2)
-        
-        with col_ent:
-            st.markdown("##### Entrada")
-            v_entrada = st.number_input("Valor Entrada (R$)", min_value=0.0, value=0.0, step=50.0)
-            f_entrada = st.selectbox("Forma (Entrada)", ["PIX", "Cartão", "Boleto", "Dinheiro"])
-            
-        with col_sal:
-            st.markdown("##### Saldo Restante")
-            v_saldo = valor_final - v_entrada
-            st.write(f"A Parcelar: **{format_currency(v_saldo)}**")
-            
-            if v_saldo > 0:
-                q_saldo = st.number_input("Qtd Parcelas", min_value=1, max_value=24, value=1)
-                f_saldo = st.selectbox("Forma (Saldo)", ["Boleto", "Cartão de Crédito", "Recorrente"])
-            else:
-                q_saldo = 0
-                f_saldo = "-"
+        st.divider()
 
-        st.write("---")
-        c_btn1, c_btn2 = st.columns([1, 5])
-        if c_btn1.button("Voltar"):
+        # 2. ENTRADA (Até 3x, Manual na 1ª, Automático no resto)
+        st.markdown("#### 1. Entrada")
+        ce1, ce2 = st.columns([2, 1])
+        v_entrada_total = ce1.number_input("Valor Total da Entrada", min_value=0.0, max_value=valor_final, value=0.0, step=50.0)
+        q_entrada = ce2.selectbox("Parcelas Entrada", [1, 2, 3])
+        
+        lista_entrada = []
+        if v_entrada_total > 0:
+            with st.container(border=True):
+                st.caption("Detalhamento da Entrada")
+                
+                # Parcela 1 (Editável)
+                c_ep1, c_ep2, c_ep3 = st.columns(3)
+                v_sugestao = v_entrada_total / q_entrada
+                
+                v_p1 = c_ep1.number_input("Valor 1ª Parc", value=v_sugestao, step=10.0, key="v_e1")
+                d_p1 = c_ep2.date_input("Vencimento 1ª", value=date.today(), key="d_e1")
+                f_p1 = c_ep3.selectbox("Forma 1ª", ["PIX", "Cartão de Crédito", "Boleto"], key="f_e1")
+                
+                lista_entrada.append({"n": 1, "vencimento": d_p1, "valor": v_p1, "forma": f_p1})
+                
+                # Parcelas Seguintes (Automáticas para fechar a conta)
+                resto = v_entrada_total - v_p1
+                if q_entrada > 1:
+                    qtd_restante = q_entrada - 1
+                    val_restante = resto / qtd_restante if resto > 0 else 0
+                    
+                    for i in range(qtd_restante):
+                        n_parc = i + 2
+                        d_prox = d_p1 + relativedelta(months=i+1)
+                        
+                        st.markdown(f"**{n_parc}ª Parcela**: {format_currency(val_restante)} em {d_prox.strftime('%d/%m/%Y')} ({f_p1})")
+                        lista_entrada.append({
+                            "n": n_parc, 
+                            "vencimento": d_prox, 
+                            "valor": val_restante, 
+                            "forma": f_p1 # Repete a forma da primeira
+                        })
+            
+            # Validação visual
+            soma_ent = sum(p['valor'] for p in lista_entrada)
+            if abs(soma_ent - v_entrada_total) > 0.10:
+                st.warning(f"⚠️ Atenção: A soma das parcelas (R$ {soma_ent:.2f}) não bate com o total da entrada.")
+
+        # 3. SALDO RESTANTE (Até 36x, Automático)
+        saldo = valor_final - v_entrada_total
+        lista_saldo = []
+        
+        st.markdown("---")
+        st.markdown(f"#### 2. Saldo a Parcelar: {format_currency(saldo)}")
+        
+        if saldo > 0.01:
+            cs1, cs2, cs3 = st.columns(3)
+            q_saldo = cs1.number_input("Qtd Parcelas (Máx 36)", min_value=1, max_value=36, value=1)
+            d_saldo_ini = cs2.date_input("1º Vencimento Saldo", value=date.today() + relativedelta(months=1))
+            f_saldo = cs3.selectbox("Forma de Pagamento", ["Boleto", "Cartão de Crédito", "PIX"], key="forma_saldo")
+            
+            # Gerar Lista Automática de Parcelas
+            valor_parc_saldo = saldo / q_saldo
+            
+            with st.expander(f"👁️ Visualizar Parcelas ({q_saldo}x de {format_currency(valor_parc_saldo)})"):
+                for i in range(q_saldo):
+                    d_venc = d_saldo_ini + relativedelta(months=i)
+                    lista_saldo.append({
+                        "n": i+1,
+                        "vencimento": d_venc,
+                        "valor": valor_parc_saldo,
+                        "forma": f_saldo
+                    })
+                    st.write(f"Parcela {i+1}: {d_venc.strftime('%d/%m/%Y')} - {format_currency(valor_parc_saldo)} ({f_saldo})")
+        
+        else:
+            st.success("O contrato foi quitado na entrada!")
+
+        # 4. AÇÃO FINAL
+        st.divider()
+        cb1, cb2 = st.columns([1, 4])
+        
+        if cb1.button("Voltar"):
             st.session_state.step = 2
             st.rerun()
+            
+        if cb2.button("🚀 Gerar Contrato e Link de Assinatura", type="primary", use_container_width=True):
+            try:
+                # Prepara dados para JSON (datas precisam virar string)
+                detalhes_entrada_serial = [
+                    {**p, "vencimento": p["vencimento"].isoformat()} for p in lista_entrada
+                ]
+                detalhes_saldo_serial = [
+                    {**p, "vencimento": p["vencimento"].isoformat()} for p in lista_saldo
+                ]
 
-        if c_btn2.button("🚀 Gerar Contrato", type="primary"):
-            # Preparar dados para o banco
-            novo_contrato = {
-                "aluno_id": st.session_state.form_data['aluno']['id'],
-                "turma_id": st.session_state.form_data['turma']['id'],
-                "valor_curso": val_base,
-                "percentual_desconto": desc_perc,
-                "valor_final": valor_final,
-                "valor_material": valor_material,
-                "entrada_valor": v_entrada,
-                "entrada_forma_pagamento": f_entrada,
-                "saldo_valor": v_saldo,
-                "saldo_qtd_parcelas": q_saldo,
-                "saldo_forma_pagamento": f_saldo,
-                "token_acesso": str(uuid.uuid4()),
-                "status": "Pendente",
-                "caminho_arquivo": "", # Será preenchido na geração do PDF se houver
-                "created_at": datetime.now().isoformat()
-            }
-            
-            # Salva no Banco
-            res = ContratoRepository.criar_contrato(novo_contrato)
-            
-            # Salva o token na sessão para mostrar o link na próxima tela
-            st.session_state.ultimo_token = novo_contrato["token_acesso"]
-            
-            st.success("Contrato registrado no banco de dados!")
-            st.session_state.step = 4
-            st.rerun()
+                novo_contrato = {
+                    "aluno_id": st.session_state.form_data['aluno']['id'],
+                    "turma_id": st.session_state.form_data['turma']['id'],
+                    "valor_curso": valor_bruto,
+                    "percentual_desconto": percent_desc,
+                    "valor_final": valor_final,
+                    "valor_material": valor_material_calc,
+                    
+                    # Entrada
+                    "entrada_valor": v_entrada_total,
+                    "entrada_detalhes": detalhes_entrada_serial, # Salva lista completa
+                    
+                    # Saldo
+                    "saldo_valor": saldo,
+                    "saldo_qtd_parcelas": len(lista_saldo),
+                    "saldo_forma_pagamento": f_saldo if saldo > 0 else "À Vista",
+                    "saldo_detalhes": detalhes_saldo_serial, # Salva lista completa
+                    
+                    "token_acesso": str(uuid.uuid4()),
+                    "status": "Pendente",
+                    "created_at": datetime.now().isoformat()
+                }
+                
+                # Salva no Supabase
+                ContratoRepository.criar_contrato(novo_contrato)
+                
+                st.session_state.ultimo_token = novo_contrato["token_acesso"]
+                st.session_state.step = 4
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"Erro ao salvar contrato: {e}")
 
-    # --- PASSO 4: FINALIZAÇÃO ---
+    # --- PASSO 4: SUCESSO ---
     elif st.session_state.step == 4:
         st.balloons()
-        st.success("Contrato pronto para assinatura!")
-        st.write("Envie este link para o aluno assinar:")
+        st.success("Contrato Criado com Sucesso!")
         
-        token = st.session_state.get('ultimo_token', 'ERRO_TOKEN')
-        # URL Genérica - Ajuste conforme seu domínio real
+        token = st.session_state.get('ultimo_token', '')
         link = f"https://nexusmed-portal.streamlit.app/Assinatura?token={token}"
         
+        st.markdown("### 🔗 Link para o Aluno")
         st.code(link, language="text")
-        st.info("O aluno poderá acessar este link, revisar os valores e assinar digitalmente.")
+        st.info("Envie este link para o aluno assinar digitalmente.")
         
         if st.button("Criar Novo Contrato"):
             st.session_state.step = 1
