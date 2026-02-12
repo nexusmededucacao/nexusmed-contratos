@@ -1,3 +1,4 @@
 libreoffice-writer
 default-jre
 fontconfig
+libreoffice
