@@ -5,7 +5,7 @@ from src.database.repo_alunos import AlunoRepository
 from src.database.repo_cursos import CursoRepository
 from src.services.contract_generator import ContractGenerator
 from src.utils.formatters import format_currency, format_cpf
-{{{{
+
 # Proteção de Acesso
 if not st.session_state.get("authenticated"):
     st.error("Por favor, faça login para acessar esta página.")
