@@ -1,32 +1,43 @@
 import streamlit as st
 import hashlib
 from datetime import datetime
+import io
+import re
 from src.database.repo_contratos import ContratoRepository
 from src.document_engine.processor import ContractProcessor
 from src.document_engine.pdf_converter import PDFManager
-from src.utils.formatters import format_currency, format_cpf, get_full_date_ptbr
+from src.utils.formatters import format_currency, format_cpf, format_date_br
 
-# Configuração White Label: Esconde menus e barra lateral
-st.set_page_config(page_title="Assinatura de Contrato | NexusMed", layout="centered", initial_sidebar_state="collapsed")
+# Configuração White Label
+st.set_page_config(page_title="Assinatura de Contrato | NexusMed", layout="centered")
 
 st.markdown("""
     <style>
-    [data-testid="stSidebar"] {display: none;}
-    [data-testid="stHeader"] {display: none;}
-    footer {visibility: hidden;}
+    [data-testid="stSidebar"], [data-testid="stHeader"], footer {display: none;}
+    .main {background-color: #f8fafc;}
     </style>
     """, unsafe_allow_html=True)
 
+def limpar_cpf(cpf_str):
+    """Remove pontos, traços e espaços, mantendo apenas números."""
+    return re.sub(r'\D', '', str(cpf_str))
+
+def obter_mes_extenso(dt):
+    meses = {
+        1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+        5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+        9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+    }
+    return meses[dt.month]
+
 def main():
-    # 1. Validação do Token via URL (?token=...)
-    query_params = st.query_params
-    token = query_params.get("token")
+    token = st.query_params.get("token")
 
     if not token:
-        st.error("Link de assinatura inválido. Por favor, solicite um novo link à administração.")
+        st.error("Link de assinatura inválido ou expirado.")
         return
 
-    # 2. Busca dados do contrato
+    # 1. Busca profunda dos dados do contrato para reconstituição fiel
     contrato = ContratoRepository.buscar_por_token(token)
     
     if not contrato:
@@ -35,107 +46,134 @@ def main():
 
     if contrato['status'] == 'Assinado':
         st.success("✅ Este contrato já foi assinado e finalizado.")
-        st.info(f"Data do aceite: {datetime.fromisoformat(contrato['data_aceite']).strftime('%d/%m/%Y %H:%M')}")
         return
 
-    st.title("🖋️ Assinatura Digital de Contrato")
-    st.write(f"Olá, **{contrato['alunos']['nome_completo']}**.")
-    st.write("Revise os detalhes do seu curso abaixo:")
+    aluno = contrato['alunos']
+    curso = contrato['turmas']['cursos']
 
-    # 3. Resumo para conferência
-    with st.container(border=True):
-        col1, col2 = st.columns(2)
-        col1.write(f"**Curso:** {contrato['turmas']['cursos']['nome']}")
-        col1.write(f"**Turma:** {contrato['turmas']['codigo_turma']}")
-        col2.write(f"**Investimento:** {format_currency(contrato['valor_final'])}")
-        col2.write(f"**Formato:** {contrato['formato_curso']}")
+    st.title("🖋️ Assinatura Digital")
+    st.write(f"Olá, **{aluno['nome_completo']}**.")
+    st.write("Por favor, revise o documento abaixo antes de confirmar sua assinatura.")
 
-    st.warning("⚠️ É obrigatório ler o contrato antes de prosseguir.")
-
-    # 4. Geração em Tempo Real para Download/Visualização
-    # (Usando o processador para gerar o DOCX e converter para PDF em memória)
+    # 2. Reconstituição fiel das tabelas (Passo 3 original)
     try:
-        processor = ContractProcessor("assets/modelo_contrato_V2.docx")
-        
-        # Contexto simplificado para o template
-        context = {
-            "nome_completo": contrato['alunos']['nome_completo'],
-            "cpf": format_cpf(contrato['alunos']['cpf']),
-            "email": contrato['alunos']['email'],
-            "curso_nome": contrato['turmas']['cursos']['nome'],
-            "valor_total": format_currency(contrato['valor_final']),
-            "data_hoje": get_full_date_ptbr()
-        }
-        
-        # Mock de parcelas para a tabela
-        payment_rows = [
-            {"parcela": "Entrada", "vencimento": "Imediato", "valor": format_currency(contrato['entrada_valor'])},
-            {"parcela": f"{contrato['saldo_qtd_parcelas']}x Saldo", "vencimento": "Mensal", "valor": format_currency(contrato['saldo_valor'] / contrato['saldo_qtd_parcelas'])}
-        ]
+        # Recria a lista de entrada baseada nos valores do banco
+        lista_entrada = [{
+            "n": "1",
+            "vencimento": "À Vista",
+            "valor": format_currency(contrato['entrada_valor']),
+            "forma": contrato.get('entrada_forma_pagamento', 'PIX')
+        }] if contrato['entrada_valor'] > 0 else []
 
-        docx_buffer = processor.generate_docx(context, payment_rows)
+        # Recria a lista de saldo
+        lista_saldo = []
+        if contrato['saldo_valor'] > 0:
+            v_parc = contrato['saldo_valor'] / contrato['saldo_qtd_parcelas']
+            for i in range(contrato['saldo_qtd_parcelas']):
+                lista_saldo.append({
+                    "numero": f"{i+1}/{contrato['saldo_qtd_parcelas']}",
+                    "data": "Mensal", # Ou calcular data real se preferir
+                    "valor": format_currency(v_parc),
+                    "forma": contrato.get('saldo_forma_pagamento', 'Boleto')
+                })
+
+        # Contexto completo para o Word (Exatamente como no gerador)
+        agora = datetime.now()
+        ctx = {
+            'nome': aluno['nome_completo'].upper(),
+            'cpf': format_cpf(aluno['cpf']),
+            'email': aluno.get('email', ''),
+            'crm': aluno.get('crm', ''),
+            'logradouro': aluno.get('logradouro', ''),
+            'numero': aluno.get('numero', ''),
+            'cidade': aluno.get('cidade', ''),
+            'uf': aluno.get('uf', ''),
+            'pos_graduacao': curso['nome'],
+            'turma': contrato['turmas']['codigo_turma'],
+            'valor_final': format_currency(contrato['valor_final']),
+            'dia': agora.day,
+            'mês': obter_mes_extenso(agora),
+            'ano': agora.year
+        }
+
+        processor = ContractProcessor("assets/modelo_contrato_V2.docx")
+        docx_buffer = processor.generate_docx(ctx, lista_entrada, lista_saldo)
         pdf_buffer = PDFManager.convert_docx_to_pdf(docx_buffer)
 
         st.download_button(
-            label="📄 Baixar Contrato para Leitura (PDF)",
+            label="📄 Visualizar Contrato Completo (PDF)",
             data=pdf_buffer,
-            file_name=f"Contrato_NexusMed_{contrato['alunos']['nome_completo']}.pdf",
-            mime="application/pdf"
+            file_name=f"Contrato_NexusMed_{aluno['nome_completo']}.pdf",
+            mime="application/pdf",
+            use_container_width=True
         )
     except Exception as e:
-        st.error(f"Erro ao gerar visualização: {e}")
+        st.error(f"Erro ao processar visualização do contrato: {e}")
+        return
 
-    # 5. Validação de Identidade
-    st.write("---")
+    st.divider()
+
+    # 3. Validação e Assinatura
     st.subheader("Confirmação de Identidade")
     
-    check_nome = st.text_input("Confirme seu Nome Completo")
-    check_cpf = st.text_input("Confirme seu CPF (apenas números)")
+    col1, col2 = st.columns(2)
+    with col1:
+        # Nome apenas para registro, sem trava rígida de comparação
+        nome_input = st.text_input("Seu Nome Completo")
+    with col2:
+        # CPF com validação numérica exata
+        cpf_input = st.text_input("Seu CPF (apenas números)")
     
-    termos = st.checkbox("Li e concordo com todos os termos e cláusulas do contrato.")
+    termos = st.checkbox("Li e concordo com todas as cláusulas e condições deste contrato.")
 
-    if st.button("ASSINAR CONTRATO AGORA", type="primary", use_container_width=True):
-        # Validação rigorosa
-        if check_nome.strip().lower() != contrato['alunos']['nome_completo'].lower():
-            st.error("O nome digitado não confere com o contrato.")
-        elif check_cpf.strip() != contrato['alunos']['cpf']:
-            st.error("O CPF digitado não confere com o contrato.")
+    if st.button("ASSINAR DIGITALMENTE", type="primary", use_container_width=True):
+        input_cpf_limpo = limpar_cpf(cpf_input)
+        aluno_cpf_limpo = limpar_cpf(aluno['cpf'])
+
+        if not nome_input:
+            st.error("Por favor, informe seu nome.")
+        elif input_cpf_limpo != aluno_cpf_limpo:
+            st.error("O CPF informado não corresponde ao cadastro do contrato.")
         elif not termos:
-            st.error("Você precisa aceitar os termos para prosseguir.")
+            st.error("Você deve aceitar os termos do contrato.")
         else:
-            # Lógica de Carimbo e Finalização
-            with st.spinner("Processando assinatura digital..."):
-                from streamlit.web.server.websocket_headers import _get_websocket_headers
-                headers = _get_websocket_headers()
-                ip_usuario = headers.get("X-Forwarded-For", "127.0.0.1").split(",")[0]
-                timestamp = datetime.now().isoformat()
-                
-                # Gera Hash de Autenticidade único para este aceite
-                hash_base = f"{token}-{timestamp}-{check_cpf}"
-                hash_auth = hashlib.sha256(hash_base.encode()).hexdigest()[:16].upper()
+            with st.spinner("Registrando assinatura e carimbando documento..."):
+                # Captura de IP segura
+                try:
+                    from streamlit.web.server.websocket_headers import _get_websocket_headers
+                    ip_usuario = _get_websocket_headers().get("X-Forwarded-For", "127.0.0.1").split(",")[0]
+                except:
+                    ip_usuario = "127.0.0.1"
 
-                # Aplica o carimbo no PDF
-                stamp = PDFManager.create_signature_stamp(
-                    datetime.now(), check_nome, check_cpf, ip_usuario, hash_auth
+                # Geração de Hash de Autenticidade
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                hash_auth = hashlib.sha256(f"{token}{input_cpf_limpo}{timestamp}".encode()).hexdigest()[:16].upper()
+
+                # Aplicação do carimbo em todas as páginas (Rodapé)
+                stamp_text = PDFManager.create_signature_stamp(
+                    datetime.now(), nome_input.upper(), format_cpf(input_cpf_limpo), ip_usuario, hash_auth
                 )
-                pdf_final = PDFManager.apply_stamp_to_pdf(pdf_buffer, stamp)
+                pdf_final = PDFManager.apply_stamp_to_pdf(pdf_buffer, stamp_text)
 
-                # Salva no Banco
+                # Persistência no Banco
                 payload = {
+                    "status": "Assinado",
+                    "data_aceite": datetime.now().isoformat(),
                     "ip_aceite": ip_usuario,
                     "hash_aceite": hash_auth,
-                    "recibo_aceite_texto": f"Assinado via Portal NexusMed por {check_nome}",
+                    "recibo_aceite_texto": f"Assinado por {nome_input} (IP: {ip_usuario})"
                 }
                 ContratoRepository.registrar_assinatura(contrato['id'], payload)
 
-                st.success("🎉 Contrato assinado com sucesso!")
+                st.balloons()
+                st.success("Assinatura realizada com sucesso!")
                 
-                # Disponibiliza o contrato já carimbado
                 st.download_button(
-                    label="📥 Baixar meu Contrato Assinado",
+                    label="📥 Baixar via assinada (Comprovante)",
                     data=pdf_final,
-                    file_name=f"CONTRATO_ASSINADO_NEXUSMED.pdf",
-                    mime="application/pdf"
+                    file_name=f"CONTRATO_ASSINADO_{aluno['nome_completo']}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
                 )
 
 if __name__ == "__main__":
