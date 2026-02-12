@@ -145,14 +145,44 @@ def main():
         if c_b2.button("🚀 Gerar Contrato", type="primary", disabled=not conferido, use_container_width=True):
             with st.spinner("Processando Documento..."):
                 token = str(uuid.uuid4())
+                
                 # Preparar Contexto Completo para o Word
+                
                 ctx_doc = {
-                    'nome': aluno['nome_completo'].upper(), 'cpf': format_cpf(aluno['cpf']),
-                    'email': aluno.get('email'), 'crm': aluno.get('crm', '---'),
-                    'logradouro': aluno.get('logradouro', ''), 'numero': aluno.get('numero', ''),
-                    'cidade': aluno.get('cidade', ''), 'uf': aluno.get('uf', ''),
-                    'curso': curso['nome'], 'turma': st.session_state.form_data['turma']['codigo_turma'],
-                    'valor_total': format_currency(valor_final), 'data_atual': format_date_br(date.today())
+                    # Dados Pessoais (Tags exatas do seu Word)
+                    'nome': aluno['nome_completo'].upper(),
+                    'nacionalidade': aluno.get('nacionalidade', 'Brasileira'),
+                    'estado_civil': aluno.get('estado_civil', ''),
+                    'área_formação': aluno.get('area_formacao', ''),
+                    'cpf': format_cpf(aluno['cpf']),
+                    'crm': aluno.get('crm', ''),
+                    'email': aluno.get('email', ''),
+                    'telefone': aluno.get('telefone', ''),
+    
+                    # Endereço
+                    'logradouro': aluno.get('logradouro', ''),
+                    'numero': aluno.get('numero', ''),
+                    'complemento': aluno.get('complemento', ''),
+                    'bairro': aluno.get('bairro', ''),
+                    'cidade': aluno.get('cidade', ''),
+                    'uf': aluno.get('uf', ''),
+                    'cep': aluno.get('cep', ''),
+
+                    # Dados do Curso
+                    'curso': curso['nome'],
+                    'pos_graduacao': curso['nome'], # Caso use uma tag diferente
+                    'turma': st.session_state.form_data['turma']['codigo_turma'],
+                    'formato_curso': st.session_state.form_data['turma'].get('formato', 'Digital'),
+    
+                    # Valores
+                    'valor_total': format_currency(valor_final),
+                    'valor_material': format_currency(valor_material),
+    
+                    # Data por Extenso (Para o rodapé da página 07 do Word)
+                    'dia': datetime.now().day,
+                    'mês': get_full_date_ptbr().split(' de ')[1], # Pega apenas o nome do mês
+                    'ano': datetime.now().year,
+                    'data_atual': format_date_br(date.today())
                 }
 
                 # Execução do Motor de Documentos
