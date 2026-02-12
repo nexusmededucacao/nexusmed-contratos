@@ -70,12 +70,13 @@ def main():
                     st.session_state.step = 3
                     st.rerun()
 
-    # --- PASSO 3: FINANCEIRO (CORRIGIDO) ---
+    # --- PASSO 3: FINANCEIRO (LÓGICA CASCATA INTELIGENTE) ---
     elif st.session_state.step == 3:
         st.subheader("Etapa 3: Financeiro")
         aluno = st.session_state.form_data['aluno']
         curso = st.session_state.form_data['curso']
         
+        # 1. CÁLCULO DE VALORES
         valor_bruto = float(curso.get('valor_bruto', 0))
         valor_material_calc = round(valor_bruto * 0.30, 2)
         
@@ -96,7 +97,7 @@ def main():
         st.success(f"### Valor Final do Contrato: {format_currency(valor_final)}")
         st.divider()
 
-        # 2. ENTRADA - LÓGICA DE CASCATA BLINDADA
+        # 2. ENTRADA - SISTEMA DE CASCATA
         st.markdown("#### 1. Pagamento de Entrada / À Vista")
         ce1, ce2 = st.columns(2)
         v_entrada_total = ce1.number_input("Valor Total da Entrada", 0.0, valor_final, 0.0, step=50.0)
@@ -107,57 +108,62 @@ def main():
         data_ultima_entrada = date.today()
 
         if v_entrada_total > 0:
-            # Saldo disponível para distribuir nas parcelas
-            saldo_disponivel = v_entrada_total
+            # Saldo "vivo" que vai sendo consumido a cada parcela criada
+            saldo_para_distribuir = v_entrada_total
             
             for i in range(q_entrada):
                 with st.container(border=True):
                     c_e1, c_e2, c_e3 = st.columns(3)
                     
                     # Chave única para o widget
-                    key_val = f"vent_{i}"
+                    k_val = f"v_ent_{i}_{v_entrada_total}" # Chave muda se o total mudar, resetando o form (útil!)
                     
-                    # Definição do Limite Máximo para esta parcela
-                    max_permitido = float(round(saldo_disponivel, 2))
+                    # O máximo que esta parcela pode ter é o saldo restante
+                    max_permitido = float(round(saldo_para_distribuir, 2))
                     
-                    # Lógica da Última Parcela: Ela deve ser EXATAMENTE o que sobrou.
-                    if i == q_entrada - 1:
+                    # Se for a última parcela, ela DEVE ser o saldo restante exato para fechar a conta
+                    is_last = (i == q_entrada - 1)
+                    
+                    if is_last:
+                        # Última parcela: Valor fixo calculado automaticamente
                         v_p = c_e1.number_input(
-                            f"Valor P{i+1} (Saldo Restante)", 
-                            value=max_permitido, 
-                            disabled=True, # Bloqueia edição para garantir a soma exata
-                            key=key_val
+                            f"Valor P{i+1} (Fechamento)", 
+                            value=max_permitido,
+                            disabled=True, # Bloqueado para garantir precisão matemática
+                            key=k_val
                         )
                     else:
-                        # CORREÇÃO DO ERRO 'ValueAboveMax':
-                        # Antes de criar o widget, verificamos se o valor que está na memória do Streamlit (session_state)
-                        # é maior que o novo máximo permitido. Se for, forçamos a atualização.
-                        if key_val in st.session_state:
-                            if st.session_state[key_val] > max_permitido:
-                                st.session_state[key_val] = max_permitido
+                        # Parcelas intermediárias: Sugere divisão igualitária do saldo restante
+                        parcelas_restantes = q_entrada - i
+                        sugestao = round(saldo_para_distribuir / parcelas_restantes, 2)
                         
-                        # Sugestão inicial (divisão proporcional)
-                        sugestao = round(saldo_disponivel / (q_entrada - i), 2)
+                        # --- SANITIZAÇÃO DE ESTADO (CORREÇÃO DO ERRO) ---
+                        # Antes de criar o widget, verificamos se o valor na memória é ilegal
+                        if k_val in st.session_state:
+                            if st.session_state[k_val] > max_permitido:
+                                st.session_state[k_val] = max_permitido
                         
+                        # Garante que o 'value' inicial respeite o limite
+                        val_inicial = min(sugestao, max_permitido)
+
                         v_p = c_e1.number_input(
                             f"Valor P{i+1}", 
                             min_value=0.0, 
                             max_value=max_permitido,
-                            value=min(sugestao, max_permitido), 
-                            key=key_val
+                            value=val_inicial, 
+                            key=k_val
                         )
 
-                    # Data e Forma
-                    d_p = c_e2.date_input(f"Vencimento P{i+1}", value=date.today() + relativedelta(days=i*30), key=f"dent_{i}")
-                    f_p = c_e3.selectbox(f"Forma P{i+1}", opcoes_pagamento, key=f"fent_{i}")
+                    d_p = c_e2.date_input(f"Vencimento P{i+1}", value=date.today() + relativedelta(days=i*30), key=f"d_ent_{i}")
+                    f_p = c_e3.selectbox(f"Forma P{i+1}", opcoes_pagamento, key=f"f_ent_{i}")
                     
                     lista_entrada.append({
                         "numero": i+1, "data": d_p.strftime("%d/%m/%Y"), 
                         "valor": format_currency(v_p), "forma": f_p, "valor_num": v_p
                     })
                     
-                    # Subtrai o valor definido do saldo disponível para a próxima parcela
-                    saldo_disponivel = round(saldo_disponivel - v_p, 2)
+                    # Deduz o valor escolhido do saldo para a próxima iteração
+                    saldo_para_distribuir = round(saldo_para_distribuir - v_p, 2)
                     data_ultima_entrada = d_p
 
         # 3. SALDO REMANESCENTE
@@ -168,8 +174,8 @@ def main():
             st.divider()
             st.markdown(f"#### 2. Saldo Remanescente: {format_currency(saldo_restante)}")
             
-            # --- DROPDOWN (EXPANDER) PARA LIMPAR A TELA ---
-            with st.expander("📊 Clique aqui para visualizar as parcelas do Saldo", expanded=False):
+            # --- DROPDOWN (EXPANDER) ---
+            with st.expander("📊 Clique aqui para configurar o parcelamento do Saldo", expanded=False):
                 cs1, cs2, cs3 = st.columns(3)
                 q_saldo = cs1.number_input("Qtd Parcelas Saldo", 1, 36, 12)
                 d_saldo_ini = cs2.date_input("1º Vencimento Saldo", value=data_ultima_entrada + relativedelta(months=1))
@@ -179,7 +185,6 @@ def main():
                 soma_acumulada_saldo = 0
                 
                 for i in range(q_saldo):
-                    # Ajuste de centavos na última parcela
                     if i == q_saldo - 1:
                         v_parc = round(saldo_restante - soma_acumulada_saldo, 2)
                     else:
@@ -200,14 +205,11 @@ def main():
 
         # 4. VALIDAÇÃO FINAL E GERAÇÃO
         soma_total_dist = sum(p['valor_num'] for p in lista_entrada) + sum(p['valor_num'] for p in lista_saldo)
-        
         conferido = abs(round(soma_total_dist, 2) - valor_final) <= 0.05
 
         st.divider()
         if not conferido:
-            st.error(f"❌ Erro matemático: Soma total ({format_currency(soma_total_dist)}) não fecha com o Valor do Contrato ({format_currency(valor_final)}). Verifique as parcelas da entrada.")
-        else:
-            st.success("✅ Conciliação financeira perfeita.")
+            st.error(f"❌ Erro matemático: Soma ({format_currency(soma_total_dist)}) difere do total ({format_currency(valor_final)}).")
         
         c_b1, c_b2 = st.columns([1, 4])
         if c_b1.button("Voltar"): st.session_state.step = 2; st.rerun()
