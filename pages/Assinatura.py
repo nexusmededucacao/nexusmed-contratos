@@ -7,7 +7,8 @@ from src.database.repo_contratos import ContratoRepository
 from src.document_engine.processor import ContractProcessor
 from src.document_engine.pdf_converter import PDFManager
 from src.utils.formatters import format_currency, format_cpf, format_date_br
-from src.utils.storage import StorageService # Importação necessária para o Storage
+from src.utils.storage import StorageService
+from src.database.connection import supabase # Import necessário para upload customizado
 
 # Configuração White Label
 st.set_page_config(page_title="Assinatura de Contrato | NexusMed", layout="centered")
@@ -20,7 +21,6 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 def limpar_cpf(cpf_str):
-    """Remove pontos, traços e espaços, mantendo apenas números."""
     return re.sub(r'\D', '', str(cpf_str))
 
 def obter_mes_extenso(dt):
@@ -38,7 +38,6 @@ def main():
         st.error("Link de assinatura inválido ou expirado.")
         return
 
-    # 1. Busca profunda dos dados do contrato para reconstituição fiel
     contrato = ContratoRepository.buscar_por_token(token)
     
     if not contrato:
@@ -47,7 +46,6 @@ def main():
 
     if contrato['status'] == 'Assinado':
         st.success("✅ Este contrato já foi assinado e finalizado.")
-        # Opcional: Permitir que o aluno baixe o arquivo que já está no storage
         return
 
     aluno = contrato['alunos']
@@ -57,7 +55,6 @@ def main():
     st.write(f"Olá, **{aluno['nome_completo']}**.")
     st.write("Por favor, revise o documento abaixo antes de confirmar sua assinatura.")
 
-    # 2. Reconstituição fiel das tabelas
     try:
         lista_entrada = [{
             "n": "1",
@@ -112,9 +109,7 @@ def main():
 
     st.divider()
 
-    # 3. Validação e Assinatura
     st.subheader("Confirmação de Identidade")
-    
     col1, col2 = st.columns(2)
     with col1:
         nome_input = st.text_input("Seu Nome Completo")
@@ -134,56 +129,61 @@ def main():
         elif not termos:
             st.error("Você deve aceitar os termos do contrato.")
         else:
-            with st.spinner("Registrando assinatura e finalizando documento..."):
-                # Captura de IP
+            with st.spinner("Finalizando assinatura e arquivando documento assinado..."):
                 try:
                     from streamlit.web.server.websocket_headers import _get_websocket_headers
                     ip_usuario = _get_websocket_headers().get("X-Forwarded-For", "127.0.0.1").split(",")[0]
                 except:
                     ip_usuario = "127.0.0.1"
 
-                # Geração de Hash de Autenticidade
                 timestamp_agora = datetime.now()
                 hash_auth = hashlib.sha256(f"{token}{input_cpf_limpo}{timestamp_agora.isoformat()}".encode()).hexdigest()[:16].upper()
 
-                # Aplicação do carimbo em todas as páginas
+                # Gera Carimbo e Merge (PDF Final)
                 stamp_text = PDFManager.create_signature_stamp(
                     timestamp_agora, nome_input.upper(), format_cpf(input_cpf_limpo), ip_usuario, hash_auth
                 )
                 pdf_final = PDFManager.apply_stamp_to_pdf(pdf_buffer, stamp_text)
 
-                # --- NOVA LÓGICA: SUBSTITUIÇÃO NO STORAGE ---
-                # Reutilizamos o StorageService.upload_minuta que possui upsert=True por padrão
-                path_storage, _ = StorageService.upload_minuta(
-                    pdf_final, 
-                    aluno['nome_completo'], 
-                    curso['nome']
-                )
+                # --- LÓGICA DE NOMENCLATURA: ADICIONANDO 'ASSINADO' ---
+                aluno_nome_limpo = StorageService.sanitizar_nome(aluno['nome_completo'])
+                curso_nome_limpo = StorageService.sanitizar_nome(curso['nome'])
+                
+                # Nome do arquivo conforme solicitado
+                nome_arquivo_assinado = f"Contrato_{aluno_nome_limpo}_{curso_nome_limpo}_ASSINADO.pdf"
+                novo_path = f"minutas/{nome_arquivo_assinado}"
 
-                if path_storage:
-                    # Persistência no Banco com dados da assinatura
+                # Upload do novo arquivo assinado
+                try:
+                    supabase.storage.from_("contratos").upload(
+                        path=novo_path,
+                        file=pdf_final.getvalue(),
+                        file_options={"content-type": "application/pdf", "upsert": "true"}
+                    )
+                    
+                    # Atualização no Banco de Dados
                     payload = {
                         "status": "Assinado",
                         "data_aceite": timestamp_agora.isoformat(),
                         "ip_aceite": ip_usuario,
                         "hash_aceite": hash_auth,
                         "recibo_aceite_texto": f"Assinado por {nome_input} (IP: {ip_usuario})",
-                        "caminho_arquivo": path_storage # Garante que o banco aponta para o path correto
+                        "caminho_arquivo": novo_path  # Aponta para o novo arquivo com sufixo ASSINADO
                     }
                     ContratoRepository.registrar_assinatura(contrato['id'], payload)
 
                     st.balloons()
-                    st.success("Assinatura realizada e contrato arquivado com sucesso!")
+                    st.success(f"Contrato assinado com sucesso! Arquivo arquivado: {nome_arquivo_assinado}")
                     
                     st.download_button(
                         label="📥 Baixar minha via assinada (PDF)",
                         data=pdf_final,
-                        file_name=f"CONTRATO_ASSINADO_{aluno['nome_completo']}.pdf",
+                        file_name=nome_arquivo_assinado,
                         mime="application/pdf",
                         use_container_width=True
                     )
-                else:
-                    st.error("Erro ao salvar o arquivo assinado no servidor. Tente novamente.")
+                except Exception as e:
+                    st.error(f"Erro ao salvar arquivo assinado no servidor: {e}")
 
 if __name__ == "__main__":
     main()
