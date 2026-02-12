@@ -1,6 +1,5 @@
 import streamlit as st
 import uuid
-import json
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 from src.database.repo_alunos import AlunoRepository
@@ -26,7 +25,7 @@ def main():
         busca = st.text_input("Buscar Aluno por Nome ou CPF", placeholder="Digite...")
         
         if busca:
-            # Lógica de Busca Híbrida
+            # Busca Híbrida
             if any(char.isdigit() for char in busca):
                 alunos = AlunoRepository.buscar_por_cpf(busca)
                 if not alunos: alunos = AlunoRepository.filtrar_por_nome(busca)
@@ -93,8 +92,6 @@ def main():
         # 1. VALORES DO CURSO
         curso = st.session_state.form_data['curso']
         valor_bruto = float(curso.get('valor_bruto', 0))
-        
-        # Regra: Material é 30% do Bruto (Apenas visualização)
         valor_material_calc = valor_bruto * 0.30
         
         c1, c2, c3 = st.columns(3)
@@ -102,8 +99,6 @@ def main():
         c2.metric("Material Incluso (30%)", format_currency(valor_material_calc))
         
         percent_desc = c3.number_input("Desconto (%)", 0.0, 100.0, 0.0, step=1.0)
-        
-        # Valor Final = Bruto - Desconto
         valor_final = valor_bruto * (1 - (percent_desc/100))
         
         st.markdown(f"""
@@ -115,7 +110,7 @@ def main():
 
         st.divider()
 
-        # 2. ENTRADA (LÓGICA AJUSTADA: Alinhamento Correto)
+        # 2. ENTRADA (LÓGICA AUTOMÁTICA RECUPERADA)
         st.markdown("#### 1. Entrada")
         ce1, ce2 = st.columns([2, 1])
         v_entrada_total = ce1.number_input("Valor Total da Entrada", min_value=0.0, max_value=valor_final, value=0.0, step=50.0)
@@ -125,24 +120,24 @@ def main():
         opcoes_pagamento = ["PIX", "Cartão de Crédito", "Boleto", "Dinheiro", "Cartão de Débito"]
 
         if v_entrada_total > 0:
-            st.caption("Detalhamento das Parcelas da Entrada:")
+            st.caption("Detalhamento da Entrada:")
             
-            # --- Parcela 1 (Editável) ---
+            # --- Parcela 1 (Mestre) ---
             with st.container(border=True):
-                # Título fora das colunas para não quebrar o alinhamento
+                # Título fora da coluna para alinhar
                 st.markdown("**1ª Parcela**")
-                
                 c_ep1, c_ep2, c_ep3 = st.columns(3)
+                
                 v_sugestao = v_entrada_total / q_entrada
                 
-                # Agora os inputs estão todos na mesma linha horizontal
+                # Inputs da 1ª Parcela
                 v_p1 = c_ep1.number_input("Valor", value=v_sugestao, step=10.0, key="v_e1")
                 d_p1 = c_ep2.date_input("Vencimento", value=date.today(), key="d_e1")
                 f_p1 = c_ep3.selectbox("Forma", opcoes_pagamento, key="f_e1")
                 
                 lista_entrada.append({"n": 1, "vencimento": d_p1, "valor": v_p1, "forma": f_p1})
                 
-            # --- Parcelas Seguintes (Editáveis) ---
+            # --- Parcelas Seguintes (Escravas da 1ª) ---
             resto = v_entrada_total - v_p1
             
             if q_entrada > 1:
@@ -153,19 +148,26 @@ def main():
                     n_parc = i + 2
                     
                     with st.container(border=True):
-                        st.markdown(f"**{n_parc}ª Parcela**") # Título acima para manter padrão
+                        st.markdown(f"**{n_parc}ª Parcela**")
                         col_a, col_b, col_c = st.columns(3)
                         
-                        # Valor calculado mas editável se o usuário quiser ajustar centavos
-                        val_real = col_a.number_input("Valor", value=val_restante_base, step=10.0, key=f"v_e{n_parc}")
+                        # TRUQUE DO KEY: 
+                        # O 'key' depende do valor/data da 1ª parcela. 
+                        # Se a 1ª mudar, esse campo reseta e recalcula.
+                        key_val = f"v_e{n_parc}_{v_p1}_{v_entrada_total}" 
+                        key_date = f"d_e{n_parc}_{d_p1}"
+                        key_form = f"f_e{n_parc}_{f_p1}"
+
+                        # Valor (Calculado mas Editável)
+                        val_real = col_a.number_input("Valor", value=val_restante_base, step=10.0, key=key_val)
                         
-                        # Data Editável
+                        # Data (Calculada +30 dias, mas Editável)
                         d_sugestao = d_p1 + relativedelta(months=i+1)
-                        d_real = col_b.date_input(f"Vencimento", value=d_sugestao, key=f"d_e{n_parc}")
+                        d_real = col_b.date_input("Vencimento", value=d_sugestao, key=key_date)
                         
-                        # Forma Editável
+                        # Forma (Copia a anterior, mas Editável)
                         idx_forma = opcoes_pagamento.index(f_p1) if f_p1 in opcoes_pagamento else 0
-                        f_real = col_c.selectbox(f"Forma", opcoes_pagamento, index=idx_forma, key=f"f_e{n_parc}")
+                        f_real = col_c.selectbox("Forma", opcoes_pagamento, index=idx_forma, key=key_form)
                         
                         lista_entrada.append({
                             "n": n_parc, 
@@ -174,12 +176,12 @@ def main():
                             "forma": f_real 
                         })
             
-            # Validação visual de soma
+            # Validação
             soma_ent = sum(p['valor'] for p in lista_entrada)
             if abs(soma_ent - v_entrada_total) > 0.10:
                 st.warning(f"⚠️ A soma das parcelas (R$ {soma_ent:.2f}) difere do Total da Entrada.")
 
-        # 3. SALDO RESTANTE (Lógica Mantida)
+        # 3. SALDO RESTANTE
         saldo = valor_final - v_entrada_total
         lista_saldo = []
         
@@ -219,7 +221,7 @@ def main():
             
         if cb2.button("🚀 Gerar Contrato e Link de Assinatura", type="primary", use_container_width=True):
             try:
-                # Serialização para JSON
+                # Serialização JSON
                 detalhes_entrada_serial = [
                     {**p, "vencimento": p["vencimento"].isoformat()} for p in lista_entrada
                 ]
