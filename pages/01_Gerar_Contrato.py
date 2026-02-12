@@ -104,7 +104,7 @@ def main():
         st.markdown(f"""
         <div style="background-color: #dcfce7; padding: 15px; border-radius: 8px; border: 1px solid #22c55e; margin-bottom: 20px;">
             <h3 style="margin:0; color: #14532d;">Valor Final: {format_currency(valor_final)}</h3>
-            <small style="color: #166534;">Este é o valor total a ser pago pelo aluno (Serviço + Material).</small>
+            <small style="color: #166534;">Este é o valor total a ser pago pelo aluno.</small>
         </div>
         """, unsafe_allow_html=True)
 
