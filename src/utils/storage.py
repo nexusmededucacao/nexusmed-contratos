@@ -1,43 +1,53 @@
-import io
-import unicodedata
 import re
-from src.database.connection import supabase
+from datetime import datetime
+from decimal import Decimal
 
-class StorageService:
-    @staticmethod
-    def sanitizar_nome(texto: str) -> str:
-        """Remove acentos, espaços e caracteres especiais."""
-        # Normaliza (ex: João -> Joao)
-        nfkd = unicodedata.normalize('NFKD', texto)
-        sem_acento = u"".join([c for c in nfkd if not unicodedata.combining(c)])
-        # Remove tudo que não for letra ou número e troca espaço por _
-        limpo = re.sub(r'[^a-zA-Z0-9]', '_', sem_acento)
-        return limpo
+def format_cpf(cpf: str) -> str:
+    """Aplica a máscara de CPF: 000.000.000-00"""
+    if not cpf: return ""
+    # Remove qualquer caractere não numérico
+    numbers = re.sub(r'\D', '', cpf)
+    if len(numbers) != 11:
+        return numbers  # Retorna o original se não tiver 11 dígitos
+    return f"{numbers[:3]}.{numbers[3:6]}.{numbers[6:9]}-{numbers[9:]}"
 
-    @staticmethod
-    def upload_minuta(file_bytes: io.BytesIO, nome_aluno: str, nome_curso: str) -> str:
-        """
-        Sobe o PDF para o bucket 'contratos' e retorna o caminho.
-        Nome formato: Minuta_NomeAluno_NomeCurso.pdf
-        """
-        try:
-            # Prepara o nome do arquivo
-            aluno_safe = StorageService.sanitizar_nome(nome_aluno)
-            curso_safe = StorageService.sanitizar_nome(nome_curso)
-            filename = f"Minuta_{aluno_safe}_{curso_safe}.pdf"
-            path = f"minutas/{filename}"
+def format_currency(value) -> str:
+    """Formata valor numérico para o padrão monetário brasileiro (R$ 1.234,56)"""
+    if value is None: value = 0.0
+    
+    # Converte Decimal (comum no retorno do Supabase) para float
+    if isinstance(value, Decimal):
+        value = float(value)
+        
+    # Usa um truque de substituição para formatar milhar com ponto e decimal com vírgula
+    return f"R$ {value:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
-            # Garante ponteiro no início
-            file_bytes.seek(0)
+def format_date_br(date_input) -> str:
+    """Converte objeto date ou string ISO (YYYY-MM-DD) para padrão brasileiro (DD/MM/YYYY)"""
+    if not date_input: return ""
+    try:
+        if isinstance(date_input, str):
+            # Trata strings que podem vir com timestamp do banco
+            date_input = datetime.strptime(date_input[:10], "%Y-%m-%d")
+        return date_input.strftime("%d/%m/%Y")
+    except Exception:
+        return str(date_input)
 
-            # Upload Supabase
-            supabase.storage.from_("contratos").upload(
-                path=path,
-                file=file_bytes.getvalue(),
-                file_options={"content-type": "application/pdf", "upsert": "true"}
-            )
-            
-            return path, filename
-        except Exception as e:
-            print(f"Erro Storage: {e}")
-            return None, None
+def get_full_date_ptbr() -> str:
+    """Retorna a data atual por extenso para o fechamento do contrato"""
+    months = [
+        "janeiro", "fevereiro", "março", "abril", "maio", "junho", 
+        "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"
+    ]
+    now = datetime.now()
+    return f"{now.day} de {months[now.month - 1]} de {now.year}"
+
+def format_phone(phone: str) -> str:
+    """Formata telefone: (00) 00000-0000 ou (00) 0000-0000"""
+    if not phone: return ""
+    numbers = re.sub(r'\D', '', phone)
+    if len(numbers) == 11:
+        return f"({numbers[:2]}) {numbers[2:7]}-{numbers[7:]}"
+    elif len(numbers) == 10:
+        return f"({numbers[:2]}) {numbers[2:6]}-{numbers[6:]}"
+    return numbers
