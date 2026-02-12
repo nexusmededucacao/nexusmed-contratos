@@ -26,11 +26,12 @@ if not st.session_state.get("authenticated"):
     st.error("Por favor, faça login para acessar esta página.")
     st.stop()
 
-# --- CALLBACK FINANCEIRO ---
+# --- CALLBACK PARA RECÁLCULO AUTOMÁTICO DA ENTRADA ---
 def recalcular_parcelas_entrada():
-    """Recalcula parcelas em cascata."""
+    """Recalcula as parcelas seguintes da entrada quando o usuário edita uma anterior."""
     total = st.session_state.get('v_entrada_total_safe', 0.0)
     qtd = st.session_state.get('q_entrada_safe', 1)
+    
     soma_acumulada = 0.0
     
     for i in range(qtd):
@@ -38,6 +39,7 @@ def recalcular_parcelas_entrada():
         if key in st.session_state:
             val_atual = st.session_state[key]
             soma_acumulada += val_atual
+            
             saldo_restante = total - soma_acumulada
             parcelas_restantes = qtd - (i + 1)
             
@@ -57,7 +59,6 @@ def main():
     
     if "step" not in st.session_state: st.session_state.step = 1
     if "form_data" not in st.session_state: st.session_state.form_data = {}
-    # Variável para armazenar o PDF gerado em memória para o botão de download na etapa 4
     if "pdf_buffer_cache" not in st.session_state: st.session_state.pdf_buffer_cache = None
 
     # --- PASSO 1: SELEÇÃO DE ALUNO ---
@@ -107,7 +108,6 @@ def main():
         valor_bruto = float(curso.get('valor_bruto', 0))
         valor_material_calc = round(valor_bruto * 0.30, 2)
         
-        # ... (Mantido cabeçalho visual igual ao anterior) ...
         st.markdown(f"""
         <div style="background-color: #f0f9ff; padding: 15px; border-radius: 8px; border-left: 5px solid #0ea5e9; margin-bottom: 20px;">
             <h4 style="margin:0; color: #0369a1;">📚 Detalhamento do Produto</h4>
@@ -125,12 +125,14 @@ def main():
         st.success(f"### Valor Final do Contrato: {format_currency(valor_final)}")
         st.divider()
 
-        # 1. ENTRADA
+        # 1. ENTRADA (CALLBACK ATIVO)
         st.markdown("#### 1. Pagamento de Entrada / À Vista")
         ce1, ce2 = st.columns(2)
+        
         v_entrada_total = ce1.number_input("Valor Total da Entrada", 0.0, valor_final, 0.0, step=100.0, key="v_entrada_total_safe")
         q_entrada = ce2.selectbox("Qtd. Parcelas Entrada", [1, 2, 3], key="q_entrada_safe")
         
+        # Inicializa valores se mudou o total
         if "last_v_entrada" not in st.session_state or st.session_state.last_v_entrada != v_entrada_total or st.session_state.last_q_entrada != q_entrada:
             st.session_state.last_v_entrada = v_entrada_total
             st.session_state.last_q_entrada = q_entrada
@@ -147,9 +149,19 @@ def main():
             for i in range(q_entrada):
                 with st.container(border=True):
                     c_e1, c_e2, c_e3 = st.columns(3)
-                    v_p = c_e1.number_input(f"Valor P{i+1}", 0.0, valor_final, key=f"input_ent_{i}", on_change=recalcular_parcelas_entrada)
-                    d_p = c_e2.date_input(f"Vencimento P{i+1}", date.today() + relativedelta(days=i*30), key=f"dent_{i}")
+                    key_val = f"input_ent_{i}"
+                    
+                    v_p = c_e1.number_input(
+                        f"Valor P{i+1}", 
+                        min_value=0.0, 
+                        max_value=valor_final,
+                        key=key_val,
+                        on_change=recalcular_parcelas_entrada
+                    )
+                    
+                    d_p = c_e2.date_input(f"Vencimento P{i+1}", value=date.today() + relativedelta(days=i*30), key=f"dent_{i}")
                     f_p = c_e3.selectbox(f"Forma P{i+1}", opcoes_pagamento, key=f"fent_{i}")
+                    
                     lista_entrada.append({"numero": i+1, "data": d_p.strftime("%d/%m/%Y"), "valor": format_currency(v_p), "forma": f_p, "valor_num": v_p})
 
             if round(sum(p['valor_num'] for p in lista_entrada), 2) != round(v_entrada_total, 2):
@@ -198,25 +210,59 @@ def main():
                 token = str(uuid.uuid4())
                 agora = datetime.now()
                 
-                # Contexto Word
+                # --- FUNÇÕES AUXILIARES DE DADOS ---
+                def get_safe(source, key, default=""):
+                    val = source.get(key)
+                    return str(val) if val is not None else default
+
+                def format_money_word(valor):
+                    """Remove o R$ se o template já tiver, senão manda formatado."""
+                    return format_currency(valor).replace("R$", "").strip()
+
+                # Tratamento Data Nascimento
+                d_nasc = aluno.get('data_nascimento', '')
+                try:
+                    if isinstance(d_nasc, str) and d_nasc: d_nasc_fmt = datetime.strptime(d_nasc, "%Y-%m-%d").strftime("%d/%m/%Y")
+                    elif isinstance(d_nasc, (date, datetime)): d_nasc_fmt = d_nasc.strftime("%d/%m/%Y")
+                    else: d_nasc_fmt = ""
+                except: d_nasc_fmt = str(d_nasc)
+
+                # Contexto Word (Preenchendo campos vazios)
                 ctx_doc = {
-                    'nome': aluno['nome_completo'].upper(),
-                    'cpf': format_cpf(aluno['cpf']),
-                    'email': aluno.get('email', ''),
-                    'crm': aluno.get('crm', ''),
-                    'logradouro': aluno.get('logradouro', ''),
-                    'numero': aluno.get('numero', ''),
-                    'bairro': aluno.get('bairro', ''),
-                    'cidade': aluno.get('cidade', ''),
-                    'uf': aluno.get('uf', ''),
+                    'nome': get_safe(aluno, 'nome_completo').upper(),
+                    'cpf': format_cpf(get_safe(aluno, 'cpf')),
+                    'rg': get_safe(aluno, 'rg'),
+                    'orgao_emissor': get_safe(aluno, 'orgao_emissor'),
+                    'nacionalidade': get_safe(aluno, 'nacionalidade', 'Brasileira'),
+                    'estado_civil': get_safe(aluno, 'estado_civil', 'Solteiro(a)'),
+                    'data_nascimento': d_nasc_fmt,
+                    'email': get_safe(aluno, 'email'),
+                    'telefone': get_safe(aluno, 'telefone'),
+                    'crm': get_safe(aluno, 'crm'),
+                    
+                    'logradouro': get_safe(aluno, 'logradouro'),
+                    'numero': get_safe(aluno, 'numero'),
+                    'complemento': get_safe(aluno, 'complemento'),
+                    'bairro': get_safe(aluno, 'bairro'),
+                    'cidade': get_safe(aluno, 'cidade'),
+                    'uf': get_safe(aluno, 'uf'),
+                    'cep': get_safe(aluno, 'cep'),
+
+                    'curso': curso['nome'],
                     'pos_graduacao': curso['nome'],
                     'turma': st.session_state.form_data['turma']['codigo_turma'],
-                    'valor_curso': format_currency(valor_bruto),
-                    'valor_desconto': format_currency(valor_desconto),
-                    'pencentual_desconto': f"{percent_desc}%",
-                    'valor_final': format_currency(valor_final),
-                    'valor_material': format_currency(valor_material_calc),
-                    'dia': agora.day, 'mês': obter_mes_extenso(agora), 'ano': agora.year
+                    'formato': st.session_state.form_data['turma'].get('formato', 'EAD'),
+                    
+                    # Correção: Envia apenas o número para evitar R$ R$ no Word
+                    'valor_curso': format_money_word(valor_bruto),
+                    'valor_desconto': format_money_word(valor_desconto),
+                    'pencentual_desconto': f"{percent_desc}", # Sem o %
+                    'valor_final': format_money_word(valor_final),
+                    'valor_material': format_money_word(valor_material_calc),
+                    'bolsista': "SIM" if percent_desc > 0 else "NÃO",
+                    
+                    'dia': agora.day, 'mês': obter_mes_extenso(agora), 'ano': agora.year,
+                    'data_atual': format_date_br(agora)
                 }
 
                 tab_ent = [{"n": p["numero"], "vencimento": p["data"], "valor": p["valor"], "forma": p["forma"]} for p in lista_entrada]
@@ -226,7 +272,7 @@ def main():
                 docx_buffer = processor.generate_docx(ctx_doc, tab_ent, tab_sal)
                 pdf_buffer = PDFManager.convert_docx_to_pdf(docx_buffer)
                 
-                # Cache do PDF para o botão de download na próxima tela
+                # Cache do PDF para o botão de download
                 st.session_state.pdf_buffer_cache = pdf_buffer
 
                 path_s, _ = StorageService.upload_minuta(pdf_buffer, aluno['nome_completo'], curso['nome'])
@@ -243,7 +289,7 @@ def main():
                 st.session_state.step = 4
                 st.rerun()
 
-    # --- PASSO 4: PAINEL DE AÇÃO (FLUXO MANUAL) ---
+    # --- PASSO 4: PAINEL DE AÇÃO ---
     elif st.session_state.step == 4:
         st.success("✅ Contrato Gerado com Sucesso!")
         
@@ -251,8 +297,6 @@ def main():
         aluno = st.session_state.form_data['aluno']
         curso = st.session_state.form_data['curso']
         
-        # Link de assinatura
-        # IMPORTANTE: Altere localhost para a URL real em produção
         link_assinatura = f"http://localhost:8501/Assinatura?token={token}"
 
         with st.container(border=True):
@@ -261,7 +305,6 @@ def main():
             
             c1, c2 = st.columns(2)
             
-            # OPÇÃO 1: BAIXAR PDF
             if st.session_state.pdf_buffer_cache:
                 c1.download_button(
                     label="📥 Baixar PDF do Contrato",
@@ -271,8 +314,7 @@ def main():
                     use_container_width=True
                 )
             
-            # OPÇÃO 2: ENVIAR POR E-MAIL (Ação Manual)
-            if c2.button("📧 Enviar para Assinatura (E-mail)", type="primary", use_container_width=True):
+            if c2.button("📧 Enviar por E-mail", type="primary", use_container_width=True):
                 with st.spinner("Enviando e-mail..."):
                     try:
                         enviar_email_contrato(
@@ -287,11 +329,8 @@ def main():
                         st.error(f"Falha no envio: {e}")
 
             st.divider()
-            
-            # OPÇÃO 3: COPIAR LINK (WhatsApp)
-            st.markdown("**🔗 Link para envio via WhatsApp:**")
+            st.markdown("**🔗 Link para WhatsApp:**")
             st.code(link_assinatura, language="text")
-            st.caption("Copie o link acima e envie diretamente para o aluno.")
 
         if st.button("⬅️ Iniciar Novo Contrato"):
             st.session_state.step = 1
