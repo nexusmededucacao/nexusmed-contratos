@@ -11,7 +11,7 @@ from src.utils.formatters import format_currency, format_cpf
 from src.document_engine.processor import ContractProcessor
 from src.document_engine.pdf_converter import PDFManager
 from src.utils.storage import StorageService
-from src.utils.email_sender import enviar_email_contrato # Importação do envio real
+from src.utils.email_sender import enviar_email_contrato
 
 # Proteção de Acesso
 if not st.session_state.get("authenticated"):
@@ -25,7 +25,7 @@ def main():
     if "step" not in st.session_state: st.session_state.step = 1
     if "form_data" not in st.session_state: st.session_state.form_data = {}
     
-    # Cache para o PDF gerado (para não perder ao clicar em download)
+    # Cache para o PDF gerado
     if "pdf_cache" not in st.session_state: st.session_state.pdf_cache = None
     if "pdf_name" not in st.session_state: st.session_state.pdf_name = ""
 
@@ -35,7 +35,6 @@ def main():
         busca = st.text_input("Buscar Aluno por Nome ou CPF", placeholder="Digite...")
         
         if busca:
-            # Lógica de Busca Híbrida
             if any(char.isdigit() for char in busca):
                 alunos = AlunoRepository.buscar_por_cpf(busca)
                 if not alunos: alunos = AlunoRepository.filtrar_por_nome(busca)
@@ -46,12 +45,10 @@ def main():
                 st.success(f"{len(alunos)} aluno(s) encontrado(s).")
                 for a in alunos:
                     if not isinstance(a, dict): continue
-                    
                     with st.container(border=True):
                         c1, c2 = st.columns([3, 1])
                         c1.markdown(f"**{a.get('nome_completo')}**")
                         c1.caption(f"CPF: {format_cpf(a.get('cpf'))} | Email: {a.get('email')}")
-                        
                         if c2.button("Selecionar", key=f"sel_{a['id']}"):
                             st.session_state.form_data['aluno'] = a
                             st.session_state.step = 2
@@ -109,7 +106,10 @@ def main():
         c2.metric("Material Incluso (30%)", format_currency(valor_material_calc))
         
         percent_desc = c3.number_input("Desconto (%)", 0.0, 100.0, 0.0, step=1.0)
-        valor_final = valor_bruto * (1 - (percent_desc/100))
+        
+        # Cálculos Finais
+        valor_desconto = valor_bruto * (percent_desc / 100)
+        valor_final = valor_bruto - valor_desconto
         
         st.markdown(f"""
         <div style="background-color: #dcfce7; padding: 15px; border-radius: 8px; border: 1px solid #22c55e; margin-bottom: 20px;">
@@ -120,7 +120,7 @@ def main():
 
         st.divider()
 
-        # 2. ENTRADA (LÓGICA AUTOMÁTICA + EDITÁVEL)
+        # 2. ENTRADA
         st.markdown("#### 1. Entrada")
         ce1, ce2 = st.columns([2, 1])
         v_entrada_total = ce1.number_input("Valor Total da Entrada", min_value=0.0, max_value=valor_final, value=0.0, step=50.0)
@@ -132,53 +132,37 @@ def main():
         if v_entrada_total > 0:
             st.caption("Detalhamento da Entrada:")
             
-            # --- Parcela 1 (Mestre) ---
             with st.container(border=True):
                 st.markdown("**1ª Parcela**")
                 c_ep1, c_ep2, c_ep3 = st.columns(3)
-                
                 v_sugestao = v_entrada_total / q_entrada
                 
-                # Inputs da 1ª Parcela
                 v_p1 = c_ep1.number_input("Valor", value=v_sugestao, step=10.0, key="v_e1")
                 d_p1 = c_ep2.date_input("Vencimento", value=date.today(), key="d_e1")
                 f_p1 = c_ep3.selectbox("Forma", opcoes_pagamento, key="f_e1")
                 
                 lista_entrada.append({"n": 1, "vencimento": d_p1, "valor": v_p1, "forma": f_p1})
                 
-            # --- Parcelas Seguintes (Calculadas mas Editáveis) ---
             resto = v_entrada_total - v_p1
-            
             if q_entrada > 1:
                 qtd_restante = q_entrada - 1
                 val_restante_base = resto / qtd_restante if resto > 0 else 0
                 
                 for i in range(qtd_restante):
                     n_parc = i + 2
-                    
                     with st.container(border=True):
                         st.markdown(f"**{n_parc}ª Parcela**")
                         col_a, col_b, col_c = st.columns(3)
-                        
-                        # KEY DINÂMICA: Se mudar a Parcela 1, reseta estes campos para recalcular
                         key_base = f"p{n_parc}_{v_p1}_{v_entrada_total}"
                         
-                        # Valor
                         val_real = col_a.number_input("Valor", value=val_restante_base, step=10.0, key=f"v_{key_base}")
-                        
-                        # Data (Sugere +30 dias)
                         d_sugestao = d_p1 + relativedelta(months=i+1)
                         d_real = col_b.date_input("Vencimento", value=d_sugestao, key=f"d_{key_base}")
-                        
-                        # Forma (Copia anterior)
                         idx_forma = opcoes_pagamento.index(f_p1) if f_p1 in opcoes_pagamento else 0
                         f_real = col_c.selectbox("Forma", opcoes_pagamento, index=idx_forma, key=f"f_{key_base}")
                         
-                        lista_entrada.append({
-                            "n": n_parc, "vencimento": d_real, "valor": val_real, "forma": f_real 
-                        })
+                        lista_entrada.append({"n": n_parc, "vencimento": d_real, "valor": val_real, "forma": f_real})
             
-            # Validação visual
             soma_ent = sum(p['valor'] for p in lista_entrada)
             if abs(soma_ent - v_entrada_total) > 0.10:
                 st.warning(f"⚠️ A soma das parcelas (R$ {soma_ent:.2f}) difere do Total da Entrada.")
@@ -197,8 +181,6 @@ def main():
             f_saldo = cs3.selectbox("Forma de Pagamento Saldo", ["Boleto", "Cartão de Crédito", "PIX"], key="forma_saldo")
             
             valor_parc_saldo = saldo / q_saldo
-            
-            # Gera lista para salvar
             for i in range(q_saldo):
                 lista_saldo.append({
                     "n": i+1,
@@ -206,7 +188,6 @@ def main():
                     "valor": valor_parc_saldo,
                     "forma": f_saldo
                 })
-        
         else:
             st.success("O contrato foi quitado na entrada!")
 
@@ -220,33 +201,38 @@ def main():
             
         if cb2.button("🚀 Gerar Contrato e Link de Assinatura", type="primary", use_container_width=True):
             try:
-                with st.spinner("Processando solicitação..."):
-                    # 1. DADOS PARA O BANCO
+                with st.spinner("Gravando dados no sistema..."):
+                    # 1. DADOS PARA O BANCO (Estrutura ajustada para a tabela existente)
                     token_unico = str(uuid.uuid4())
                     
-                    # Serialização JSON das datas
-                    det_ent_json = [{**p, "vencimento": p["vencimento"].isoformat()} for p in lista_entrada]
-                    det_sal_json = [{**p, "vencimento": p["vencimento"].isoformat()} for p in lista_saldo]
+                    # Define a forma de pagamento da entrada (Pega a primeira ou padrão)
+                    forma_entrada_principal = lista_entrada[0]['forma'] if lista_entrada else "Não Informado"
 
                     novo_contrato = {
                         "aluno_id": st.session_state.form_data['aluno']['id'],
                         "turma_id": st.session_state.form_data['turma']['id'],
                         "valor_curso": valor_bruto,
                         "percentual_desconto": percent_desc,
+                        "valor_desconto": valor_desconto,  # Adicionado conforme tabela
                         "valor_final": valor_final,
                         "valor_material": valor_material_calc,
+                        
+                        # Entrada (Sem detalhes JSON, apenas totais e forma)
                         "entrada_valor": v_entrada_total,
-                        "entrada_detalhes": det_ent_json,
+                        "entrada_qtd_parcelas": len(lista_entrada),
+                        "entrada_forma_pagamento": forma_entrada_principal,
+                        
+                        # Saldo (Sem detalhes JSON, apenas totais e forma)
                         "saldo_valor": saldo,
                         "saldo_qtd_parcelas": len(lista_saldo),
                         "saldo_forma_pagamento": f_saldo if saldo > 0 else "À Vista",
-                        "saldo_detalhes": det_sal_json,
+                        
                         "token_acesso": token_unico,
                         "status": "Pendente",
                         "created_at": datetime.now().isoformat()
                     }
                     
-                    # 2. SALVA NO BANCO E PEGA O ID
+                    # 2. SALVA NO BANCO
                     res = ContratoRepository.criar_contrato(novo_contrato)
                     contrato_id = res.data[0]['id']
                     
@@ -254,7 +240,6 @@ def main():
                     aluno_nome = st.session_state.form_data['aluno']['nome_completo']
                     curso_nome = st.session_state.form_data['curso']['nome']
                     
-                    # Contexto para o Word
                     ctx_doc = {
                         'nome': aluno_nome,
                         'cpf': format_cpf(st.session_state.form_data['aluno']['cpf']),
@@ -264,42 +249,37 @@ def main():
                         'data_atual': date.today().strftime("%d/%m/%Y")
                     }
                     
+                    # O Processor ainda recebe lista_saldo para preencher a tabela no Word, se existir
                     processor = ContractProcessor("assets/modelo_contrato_V2.docx")
-                    # Envia lista_saldo caso seu Word tenha tabela dinâmica
                     docx_buffer = processor.generate_docx(ctx_doc, lista_saldo) 
                     pdf_buffer = PDFManager.convert_docx_to_pdf(docx_buffer)
                     
                     # 4. UPLOAD PARA STORAGE
-                    # (Agora usando o service correto em src/utils/storage.py)
                     path_storage, nome_final_pdf = StorageService.upload_minuta(pdf_buffer, aluno_nome, curso_nome)
                     
                     if path_storage:
                         ContratoRepository.atualizar_caminho_arquivo(contrato_id, path_storage)
                     
-                    # 5. ATUALIZA ESTADO PARA SUCESSO
+                    # 5. SUCESSO
                     st.session_state.ultimo_token = token_unico
-                    st.session_state.pdf_cache = pdf_buffer # Guarda bytes para download
+                    st.session_state.pdf_cache = pdf_buffer
                     st.session_state.pdf_name = nome_final_pdf
                     st.session_state.step = 4
                     st.rerun()
 
             except Exception as e:
-                st.error(f"Erro ao gerar contrato: {e}")
+                st.error(f"Erro ao salvar contrato: {e}")
 
     # --- PASSO 4: SUCESSO E ENVIO ---
     elif st.session_state.step == 4:
         st.balloons()
         st.success("✅ Contrato Gerado e Salvo com Sucesso!")
         
-        # Recupera dados
         token = st.session_state.get('ultimo_token', '')
-        # Ajuste para a URL real do seu app
         link_ass = f"https://nexusmed-portal.streamlit.app/Assinatura?token={token}"
-        
         pdf_bytes = st.session_state.get('pdf_cache')
         nome_pdf = st.session_state.get('pdf_name', 'contrato.pdf')
 
-        # --- EXIBIÇÃO ---
         col_link, col_acoes = st.columns([1.5, 1])
         
         with col_link:
@@ -310,7 +290,6 @@ def main():
         with col_acoes:
             st.markdown("### 📂 Ações")
             
-            # Botão Download (Revisão)
             if pdf_bytes:
                 st.download_button(
                     label="📥 Baixar PDF para Revisão",
@@ -320,21 +299,14 @@ def main():
                     use_container_width=True
                 )
             
-            # Botão Email REAL (Usa o token já existente)
             if st.button("📧 Enviar Link por E-mail", use_container_width=True):
-                # Dados para o envio
                 email_aluno = st.session_state.form_data['aluno'].get('email')
                 nome_aluno = st.session_state.form_data['aluno'].get('nome_completo')
                 nome_curso = st.session_state.form_data['curso'].get('nome')
 
                 if email_aluno:
                     with st.spinner(f"Enviando para {email_aluno}..."):
-                        resultado = enviar_email_contrato(
-                            email_destinatario=email_aluno, 
-                            nome_aluno=nome_aluno, 
-                            nome_curso=nome_curso, 
-                            token=token # Usa o token que já está na tela
-                        )
+                        resultado = enviar_email_contrato(email_aluno, nome_aluno, nome_curso, token)
                     
                     if resultado['success']:
                         st.toast(f"E-mail enviado!", icon="✅")
