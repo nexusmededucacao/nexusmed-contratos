@@ -2,10 +2,16 @@ import streamlit as st
 import uuid
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
+
+# --- IMPORTAÇÕES DO PROJETO ---
 from src.database.repo_alunos import AlunoRepository
 from src.database.repo_cursos import CursoRepository
 from src.database.repo_contratos import ContratoRepository
 from src.utils.formatters import format_currency, format_cpf
+from src.document_engine.processor import ContractProcessor
+from src.document_engine.pdf_converter import PDFManager
+from src.utils.storage import StorageService
+from src.utils.email_sender import enviar_email_contrato # Importação do envio real
 
 # Proteção de Acesso
 if not st.session_state.get("authenticated"):
@@ -18,6 +24,10 @@ def main():
     # Inicializa variáveis de sessão
     if "step" not in st.session_state: st.session_state.step = 1
     if "form_data" not in st.session_state: st.session_state.form_data = {}
+    
+    # Cache para o PDF gerado (para não perder ao clicar em download)
+    if "pdf_cache" not in st.session_state: st.session_state.pdf_cache = None
+    if "pdf_name" not in st.session_state: st.session_state.pdf_name = ""
 
     # --- PASSO 1: SELEÇÃO DE ALUNO ---
     if st.session_state.step == 1:
@@ -25,7 +35,7 @@ def main():
         busca = st.text_input("Buscar Aluno por Nome ou CPF", placeholder="Digite...")
         
         if busca:
-            # Busca Híbrida
+            # Lógica de Busca Híbrida
             if any(char.isdigit() for char in busca):
                 alunos = AlunoRepository.buscar_por_cpf(busca)
                 if not alunos: alunos = AlunoRepository.filtrar_por_nome(busca)
@@ -104,13 +114,13 @@ def main():
         st.markdown(f"""
         <div style="background-color: #dcfce7; padding: 15px; border-radius: 8px; border: 1px solid #22c55e; margin-bottom: 20px;">
             <h3 style="margin:0; color: #14532d;">Valor Final: {format_currency(valor_final)}</h3>
-            <small style="color: #166534;">Este é o valor total a ser pago pelo aluno.</small>
+            <small style="color: #166534;">Este é o valor total a ser pago pelo aluno (Serviço + Material).</small>
         </div>
         """, unsafe_allow_html=True)
 
         st.divider()
 
-        # 2. ENTRADA (LÓGICA AUTOMÁTICA RECUPERADA)
+        # 2. ENTRADA (LÓGICA AUTOMÁTICA + EDITÁVEL)
         st.markdown("#### 1. Entrada")
         ce1, ce2 = st.columns([2, 1])
         v_entrada_total = ce1.number_input("Valor Total da Entrada", min_value=0.0, max_value=valor_final, value=0.0, step=50.0)
@@ -124,7 +134,6 @@ def main():
             
             # --- Parcela 1 (Mestre) ---
             with st.container(border=True):
-                # Título fora da coluna para alinhar
                 st.markdown("**1ª Parcela**")
                 c_ep1, c_ep2, c_ep3 = st.columns(3)
                 
@@ -137,7 +146,7 @@ def main():
                 
                 lista_entrada.append({"n": 1, "vencimento": d_p1, "valor": v_p1, "forma": f_p1})
                 
-            # --- Parcelas Seguintes (Escravas da 1ª) ---
+            # --- Parcelas Seguintes (Calculadas mas Editáveis) ---
             resto = v_entrada_total - v_p1
             
             if q_entrada > 1:
@@ -151,32 +160,25 @@ def main():
                         st.markdown(f"**{n_parc}ª Parcela**")
                         col_a, col_b, col_c = st.columns(3)
                         
-                        # TRUQUE DO KEY: 
-                        # O 'key' depende do valor/data da 1ª parcela. 
-                        # Se a 1ª mudar, esse campo reseta e recalcula.
-                        key_val = f"v_e{n_parc}_{v_p1}_{v_entrada_total}" 
-                        key_date = f"d_e{n_parc}_{d_p1}"
-                        key_form = f"f_e{n_parc}_{f_p1}"
-
-                        # Valor (Calculado mas Editável)
-                        val_real = col_a.number_input("Valor", value=val_restante_base, step=10.0, key=key_val)
+                        # KEY DINÂMICA: Se mudar a Parcela 1, reseta estes campos para recalcular
+                        key_base = f"p{n_parc}_{v_p1}_{v_entrada_total}"
                         
-                        # Data (Calculada +30 dias, mas Editável)
+                        # Valor
+                        val_real = col_a.number_input("Valor", value=val_restante_base, step=10.0, key=f"v_{key_base}")
+                        
+                        # Data (Sugere +30 dias)
                         d_sugestao = d_p1 + relativedelta(months=i+1)
-                        d_real = col_b.date_input("Vencimento", value=d_sugestao, key=key_date)
+                        d_real = col_b.date_input("Vencimento", value=d_sugestao, key=f"d_{key_base}")
                         
-                        # Forma (Copia a anterior, mas Editável)
+                        # Forma (Copia anterior)
                         idx_forma = opcoes_pagamento.index(f_p1) if f_p1 in opcoes_pagamento else 0
-                        f_real = col_c.selectbox("Forma", opcoes_pagamento, index=idx_forma, key=key_form)
+                        f_real = col_c.selectbox("Forma", opcoes_pagamento, index=idx_forma, key=f"f_{key_base}")
                         
                         lista_entrada.append({
-                            "n": n_parc, 
-                            "vencimento": d_real, 
-                            "valor": val_real, 
-                            "forma": f_real 
+                            "n": n_parc, "vencimento": d_real, "valor": val_real, "forma": f_real 
                         })
             
-            # Validação
+            # Validação visual
             soma_ent = sum(p['valor'] for p in lista_entrada)
             if abs(soma_ent - v_entrada_total) > 0.10:
                 st.warning(f"⚠️ A soma das parcelas (R$ {soma_ent:.2f}) difere do Total da Entrada.")
@@ -194,19 +196,16 @@ def main():
             d_saldo_ini = cs2.date_input("1º Vencimento Saldo", value=date.today() + relativedelta(months=1))
             f_saldo = cs3.selectbox("Forma de Pagamento Saldo", ["Boleto", "Cartão de Crédito", "PIX"], key="forma_saldo")
             
-            # Gerar Lista Automática de Parcelas
             valor_parc_saldo = saldo / q_saldo
             
-            with st.expander(f"👁️ Visualizar Parcelas ({q_saldo}x de {format_currency(valor_parc_saldo)})"):
-                for i in range(q_saldo):
-                    d_venc = d_saldo_ini + relativedelta(months=i)
-                    lista_saldo.append({
-                        "n": i+1,
-                        "vencimento": d_venc,
-                        "valor": valor_parc_saldo,
-                        "forma": f_saldo
-                    })
-                    st.write(f"Parcela {i+1}: {d_venc.strftime('%d/%m/%Y')} - {format_currency(valor_parc_saldo)} ({f_saldo})")
+            # Gera lista para salvar
+            for i in range(q_saldo):
+                lista_saldo.append({
+                    "n": i+1,
+                    "vencimento": d_saldo_ini + relativedelta(months=i),
+                    "valor": valor_parc_saldo,
+                    "forma": f_saldo
+                })
         
         else:
             st.success("O contrato foi quitado na entrada!")
@@ -221,61 +220,135 @@ def main():
             
         if cb2.button("🚀 Gerar Contrato e Link de Assinatura", type="primary", use_container_width=True):
             try:
-                # Serialização JSON
-                detalhes_entrada_serial = [
-                    {**p, "vencimento": p["vencimento"].isoformat()} for p in lista_entrada
-                ]
-                detalhes_saldo_serial = [
-                    {**p, "vencimento": p["vencimento"].isoformat()} for p in lista_saldo
-                ]
+                with st.spinner("Processando solicitação..."):
+                    # 1. DADOS PARA O BANCO
+                    token_unico = str(uuid.uuid4())
+                    
+                    # Serialização JSON das datas
+                    det_ent_json = [{**p, "vencimento": p["vencimento"].isoformat()} for p in lista_entrada]
+                    det_sal_json = [{**p, "vencimento": p["vencimento"].isoformat()} for p in lista_saldo]
 
-                novo_contrato = {
-                    "aluno_id": st.session_state.form_data['aluno']['id'],
-                    "turma_id": st.session_state.form_data['turma']['id'],
-                    "valor_curso": valor_bruto,
-                    "percentual_desconto": percent_desc,
-                    "valor_final": valor_final,
-                    "valor_material": valor_material_calc,
+                    novo_contrato = {
+                        "aluno_id": st.session_state.form_data['aluno']['id'],
+                        "turma_id": st.session_state.form_data['turma']['id'],
+                        "valor_curso": valor_bruto,
+                        "percentual_desconto": percent_desc,
+                        "valor_final": valor_final,
+                        "valor_material": valor_material_calc,
+                        "entrada_valor": v_entrada_total,
+                        "entrada_detalhes": det_ent_json,
+                        "saldo_valor": saldo,
+                        "saldo_qtd_parcelas": len(lista_saldo),
+                        "saldo_forma_pagamento": f_saldo if saldo > 0 else "À Vista",
+                        "saldo_detalhes": det_sal_json,
+                        "token_acesso": token_unico,
+                        "status": "Pendente",
+                        "created_at": datetime.now().isoformat()
+                    }
                     
-                    # Entrada
-                    "entrada_valor": v_entrada_total,
-                    "entrada_detalhes": detalhes_entrada_serial,
+                    # 2. SALVA NO BANCO E PEGA O ID
+                    res = ContratoRepository.criar_contrato(novo_contrato)
+                    contrato_id = res.data[0]['id']
                     
-                    # Saldo
-                    "saldo_valor": saldo,
-                    "saldo_qtd_parcelas": len(lista_saldo),
-                    "saldo_forma_pagamento": f_saldo if saldo > 0 else "À Vista",
-                    "saldo_detalhes": detalhes_saldo_serial,
+                    # 3. GERA PDF (MINUTA)
+                    aluno_nome = st.session_state.form_data['aluno']['nome_completo']
+                    curso_nome = st.session_state.form_data['curso']['nome']
                     
-                    "token_acesso": str(uuid.uuid4()),
-                    "status": "Pendente",
-                    "created_at": datetime.now().isoformat()
-                }
-                
-                ContratoRepository.criar_contrato(novo_contrato)
-                
-                st.session_state.ultimo_token = novo_contrato["token_acesso"]
-                st.session_state.step = 4
-                st.rerun()
-                
+                    # Contexto para o Word
+                    ctx_doc = {
+                        'nome': aluno_nome,
+                        'cpf': format_cpf(st.session_state.form_data['aluno']['cpf']),
+                        'curso': curso_nome,
+                        'turma': st.session_state.form_data['turma']['codigo_turma'],
+                        'valor_total': format_currency(valor_final),
+                        'data_atual': date.today().strftime("%d/%m/%Y")
+                    }
+                    
+                    processor = ContractProcessor("assets/modelo_contrato_V2.docx")
+                    # Envia lista_saldo caso seu Word tenha tabela dinâmica
+                    docx_buffer = processor.generate_docx(ctx_doc, lista_saldo) 
+                    pdf_buffer = PDFManager.convert_docx_to_pdf(docx_buffer)
+                    
+                    # 4. UPLOAD PARA STORAGE
+                    # (Agora usando o service correto em src/utils/storage.py)
+                    path_storage, nome_final_pdf = StorageService.upload_minuta(pdf_buffer, aluno_nome, curso_nome)
+                    
+                    if path_storage:
+                        ContratoRepository.atualizar_caminho_arquivo(contrato_id, path_storage)
+                    
+                    # 5. ATUALIZA ESTADO PARA SUCESSO
+                    st.session_state.ultimo_token = token_unico
+                    st.session_state.pdf_cache = pdf_buffer # Guarda bytes para download
+                    st.session_state.pdf_name = nome_final_pdf
+                    st.session_state.step = 4
+                    st.rerun()
+
             except Exception as e:
-                st.error(f"Erro ao salvar contrato: {e}")
+                st.error(f"Erro ao gerar contrato: {e}")
 
-    # --- PASSO 4: SUCESSO ---
+    # --- PASSO 4: SUCESSO E ENVIO ---
     elif st.session_state.step == 4:
         st.balloons()
-        st.success("Contrato Criado com Sucesso!")
+        st.success("✅ Contrato Gerado e Salvo com Sucesso!")
         
+        # Recupera dados
         token = st.session_state.get('ultimo_token', '')
-        link = f"https://nexusmed-portal.streamlit.app/Assinatura?token={token}"
+        # Ajuste para a URL real do seu app
+        link_ass = f"https://nexusmed-portal.streamlit.app/Assinatura?token={token}"
         
-        st.markdown("### 🔗 Link para o Aluno")
-        st.code(link, language="text")
-        st.info("Envie este link para o aluno assinar digitalmente.")
+        pdf_bytes = st.session_state.get('pdf_cache')
+        nome_pdf = st.session_state.get('pdf_name', 'contrato.pdf')
+
+        # --- EXIBIÇÃO ---
+        col_link, col_acoes = st.columns([1.5, 1])
         
-        if st.button("Criar Novo Contrato"):
+        with col_link:
+            st.markdown("### 🔗 Link de Assinatura")
+            st.info("Copie e envie para o aluno:")
+            st.code(link_ass, language="text")
+            
+        with col_acoes:
+            st.markdown("### 📂 Ações")
+            
+            # Botão Download (Revisão)
+            if pdf_bytes:
+                st.download_button(
+                    label="📥 Baixar PDF para Revisão",
+                    data=pdf_bytes,
+                    file_name=nome_pdf,
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            
+            # Botão Email REAL (Usa o token já existente)
+            if st.button("📧 Enviar Link por E-mail", use_container_width=True):
+                # Dados para o envio
+                email_aluno = st.session_state.form_data['aluno'].get('email')
+                nome_aluno = st.session_state.form_data['aluno'].get('nome_completo')
+                nome_curso = st.session_state.form_data['curso'].get('nome')
+
+                if email_aluno:
+                    with st.spinner(f"Enviando para {email_aluno}..."):
+                        resultado = enviar_email_contrato(
+                            email_destinatario=email_aluno, 
+                            nome_aluno=nome_aluno, 
+                            nome_curso=nome_curso, 
+                            token=token # Usa o token que já está na tela
+                        )
+                    
+                    if resultado['success']:
+                        st.toast(f"E-mail enviado!", icon="✅")
+                        st.success(f"Enviado para: **{email_aluno}**")
+                    else:
+                        st.error(f"Falha no envio: {resultado['message']}")
+                else:
+                    st.warning("Aluno sem e-mail cadastrado.")
+                
+        st.divider()
+        if st.button("🔄 Iniciar Novo Contrato"):
             st.session_state.step = 1
             st.session_state.form_data = {}
+            st.session_state.pdf_cache = None
             st.rerun()
 
 if __name__ == "__main__":
