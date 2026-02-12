@@ -26,14 +26,11 @@ if not st.session_state.get("authenticated"):
     st.error("Por favor, faça login para acessar esta página.")
     st.stop()
 
-# --- CALLBACK PARA RECÁLCULO AUTOMÁTICO DA ENTRADA ---
+# --- CALLBACK FINANCEIRO ---
 def recalcular_parcelas_entrada():
-    """
-    Recalcula as parcelas seguintes da entrada quando o usuário edita uma anterior.
-    """
+    """Recalcula parcelas em cascata."""
     total = st.session_state.get('v_entrada_total_safe', 0.0)
     qtd = st.session_state.get('q_entrada_safe', 1)
-    
     soma_acumulada = 0.0
     
     for i in range(qtd):
@@ -41,7 +38,6 @@ def recalcular_parcelas_entrada():
         if key in st.session_state:
             val_atual = st.session_state[key]
             soma_acumulada += val_atual
-            
             saldo_restante = total - soma_acumulada
             parcelas_restantes = qtd - (i + 1)
             
@@ -61,6 +57,8 @@ def main():
     
     if "step" not in st.session_state: st.session_state.step = 1
     if "form_data" not in st.session_state: st.session_state.form_data = {}
+    # Variável para armazenar o PDF gerado em memória para o botão de download na etapa 4
+    if "pdf_buffer_cache" not in st.session_state: st.session_state.pdf_buffer_cache = None
 
     # --- PASSO 1: SELEÇÃO DE ALUNO ---
     if st.session_state.step == 1:
@@ -109,6 +107,7 @@ def main():
         valor_bruto = float(curso.get('valor_bruto', 0))
         valor_material_calc = round(valor_bruto * 0.30, 2)
         
+        # ... (Mantido cabeçalho visual igual ao anterior) ...
         st.markdown(f"""
         <div style="background-color: #f0f9ff; padding: 15px; border-radius: 8px; border-left: 5px solid #0ea5e9; margin-bottom: 20px;">
             <h4 style="margin:0; color: #0369a1;">📚 Detalhamento do Produto</h4>
@@ -126,14 +125,12 @@ def main():
         st.success(f"### Valor Final do Contrato: {format_currency(valor_final)}")
         st.divider()
 
-        # 1. ENTRADA (CALLBACK ATIVO)
+        # 1. ENTRADA
         st.markdown("#### 1. Pagamento de Entrada / À Vista")
         ce1, ce2 = st.columns(2)
-        
         v_entrada_total = ce1.number_input("Valor Total da Entrada", 0.0, valor_final, 0.0, step=100.0, key="v_entrada_total_safe")
         q_entrada = ce2.selectbox("Qtd. Parcelas Entrada", [1, 2, 3], key="q_entrada_safe")
         
-        # Inicializa valores se mudou o total
         if "last_v_entrada" not in st.session_state or st.session_state.last_v_entrada != v_entrada_total or st.session_state.last_q_entrada != q_entrada:
             st.session_state.last_v_entrada = v_entrada_total
             st.session_state.last_q_entrada = q_entrada
@@ -145,98 +142,63 @@ def main():
 
         lista_entrada = []
         opcoes_pagamento = ["PIX", "Cartão de Crédito", "Boleto", "Transferência"]
-        data_ultima_entrada = date.today()
-
+        
         if v_entrada_total > 0:
             for i in range(q_entrada):
                 with st.container(border=True):
                     c_e1, c_e2, c_e3 = st.columns(3)
-                    key_val = f"input_ent_{i}"
-                    
-                    v_p = c_e1.number_input(
-                        f"Valor P{i+1}", 
-                        min_value=0.0, 
-                        max_value=valor_final, # Sem travas para evitar erro
-                        key=key_val,
-                        on_change=recalcular_parcelas_entrada
-                    )
-                    
-                    d_p = c_e2.date_input(f"Vencimento P{i+1}", value=date.today() + relativedelta(days=i*30), key=f"dent_{i}")
+                    v_p = c_e1.number_input(f"Valor P{i+1}", 0.0, valor_final, key=f"input_ent_{i}", on_change=recalcular_parcelas_entrada)
+                    d_p = c_e2.date_input(f"Vencimento P{i+1}", date.today() + relativedelta(days=i*30), key=f"dent_{i}")
                     f_p = c_e3.selectbox(f"Forma P{i+1}", opcoes_pagamento, key=f"fent_{i}")
-                    
-                    lista_entrada.append({
-                        "numero": i+1, "data": d_p.strftime("%d/%m/%Y"), 
-                        "valor": format_currency(v_p), "forma": f_p, "valor_num": v_p
-                    })
-                    data_ultima_entrada = d_p
+                    lista_entrada.append({"numero": i+1, "data": d_p.strftime("%d/%m/%Y"), "valor": format_currency(v_p), "forma": f_p, "valor_num": v_p})
 
-            soma_entrada = sum(p['valor_num'] for p in lista_entrada)
-            if round(soma_entrada, 2) != round(v_entrada_total, 2):
-                st.warning(f"⚠️ Soma da entrada difere do total: {format_currency(soma_entrada)}")
+            if round(sum(p['valor_num'] for p in lista_entrada), 2) != round(v_entrada_total, 2):
+                st.warning(f"⚠️ Soma da entrada difere do total.")
 
-        # 2. SALDO REMANESCENTE
+        # 2. SALDO
         saldo_restante = round(valor_final - v_entrada_total, 2)
         lista_saldo = []
         
         if saldo_restante > 0:
             st.divider()
             st.markdown(f"#### 2. Saldo Remanescente: {format_currency(saldo_restante)}")
-            
-            # --- INPUTS VISÍVEIS (FORA DO EXPANDER) ---
             cs1, cs2, cs3 = st.columns(3)
             q_saldo = cs1.number_input("Qtd Parcelas Saldo", 1, 36, 12)
-            d_saldo_ini = cs2.date_input("1º Vencimento Saldo", value=data_ultima_entrada + relativedelta(months=1))
+            d_saldo_ini = cs2.date_input("1º Vencimento Saldo", value=date.today() + relativedelta(months=1))
             f_saldo = cs3.selectbox("Forma Saldo", ["Boleto", "Cartão de Crédito", "PIX"])
             
-            # Cálculo da lista
             v_base_saldo = round(saldo_restante / q_saldo, 2)
             soma_acumulada_saldo = 0
-            
             for i in range(q_saldo):
                 v_parc = round(saldo_restante - soma_acumulada_saldo, 2) if i == q_saldo - 1 else v_base_saldo
                 soma_acumulada_saldo += v_parc
                 venc_p = d_saldo_ini + relativedelta(months=i)
-                
                 lista_saldo.append({
-                    "Parcela": f"{i+1}/{q_saldo}",
-                    "Vencimento": venc_p.strftime("%d/%m/%Y"),
-                    "Valor": format_currency(v_parc),
-                    "Forma": f_saldo,
-                    "valor_num": v_parc
+                    "Parcela": f"{i+1}/{q_saldo}", "Vencimento": venc_p.strftime("%d/%m/%Y"),
+                    "Valor": format_currency(v_parc), "Forma": f_saldo, "valor_num": v_parc
                 })
             
-            # --- TABELA OCULTA (DENTRO DO EXPANDER) ---
             with st.expander("📊 Ver Tabela Detalhada de Vencimentos"):
-                st.dataframe(
-                    lista_saldo,
-                    column_order=["Parcela", "Vencimento", "Valor", "Forma"],
-                    hide_index=True,
-                    use_container_width=True
-                )
+                st.dataframe(lista_saldo, column_order=["Parcela", "Vencimento", "Valor", "Forma"], hide_index=True, use_container_width=True)
 
         # 3. VALIDAÇÃO E GERAÇÃO
-        soma_total_dist = sum(p['valor_num'] for p in lista_entrada) + sum(p['valor_num'] for p in lista_saldo)
+        soma_total = sum(p['valor_num'] for p in lista_entrada) + sum(p['valor_num'] for p in lista_saldo)
+        entrada_ok = True if v_entrada_total == 0 else abs(sum(p['valor_num'] for p in lista_entrada) - v_entrada_total) <= 0.05
+        total_ok = abs(round(soma_total, 2) - valor_final) <= 0.05
         
-        entrada_ok = True
-        if v_entrada_total > 0:
-             entrada_ok = abs(sum(p['valor_num'] for p in lista_entrada) - v_entrada_total) <= 0.05
-        total_ok = abs(round(soma_total_dist, 2) - valor_final) <= 0.05
-        pode_gerar = entrada_ok and total_ok
-
         st.divider()
-        if not entrada_ok:
-            st.error("❌ Erro na Entrada: Soma das parcelas não bate com o total.")
-        elif not total_ok:
-            st.error(f"❌ Erro Global: Soma total ({format_currency(soma_total_dist)}) difere do contrato.")
+        if not entrada_ok: st.error("❌ Erro na Entrada.")
+        elif not total_ok: st.error(f"❌ Erro Global: Soma ({format_currency(soma_total)}) difere do contrato.")
         
         c_b1, c_b2 = st.columns([1, 4])
         if c_b1.button("Voltar"): st.session_state.step = 2; st.rerun()
         
-        if c_b2.button("🚀 Gerar Contrato", type="primary", disabled=not pode_gerar, use_container_width=True):
+        if c_b2.button("🚀 Gerar Contrato", type="primary", disabled=not (entrada_ok and total_ok), use_container_width=True):
             with st.spinner("Gerando Documentos..."):
                 token = str(uuid.uuid4())
                 agora = datetime.now()
                 
+                # Contexto Word
                 ctx_doc = {
                     'nome': aluno['nome_completo'].upper(),
                     'cpf': format_cpf(aluno['cpf']),
@@ -254,9 +216,7 @@ def main():
                     'pencentual_desconto': f"{percent_desc}%",
                     'valor_final': format_currency(valor_final),
                     'valor_material': format_currency(valor_material_calc),
-                    'dia': agora.day,
-                    'mês': obter_mes_extenso(agora),
-                    'ano': agora.year
+                    'dia': agora.day, 'mês': obter_mes_extenso(agora), 'ano': agora.year
                 }
 
                 tab_ent = [{"n": p["numero"], "vencimento": p["data"], "valor": p["valor"], "forma": p["forma"]} for p in lista_entrada]
@@ -266,31 +226,74 @@ def main():
                 docx_buffer = processor.generate_docx(ctx_doc, tab_ent, tab_sal)
                 pdf_buffer = PDFManager.convert_docx_to_pdf(docx_buffer)
                 
+                # Cache do PDF para o botão de download na próxima tela
+                st.session_state.pdf_buffer_cache = pdf_buffer
+
                 path_s, _ = StorageService.upload_minuta(pdf_buffer, aluno['nome_completo'], curso['nome'])
                 
                 ContratoRepository.criar_contrato({
                     "aluno_id": aluno['id'], 
                     "turma_id": st.session_state.form_data['turma']['id'],
-                    "valor_final": valor_final, 
-                    "token_acesso": token, 
-                    "status": "Pendente",
-                    "caminho_arquivo": path_s, 
-                    "valor_desconto": valor_desconto, 
-                    "valor_material": valor_material_calc,
-                    "entrada_valor": v_entrada_total,
-                    "saldo_valor": saldo_restante,
-                    "saldo_qtd_parcelas": q_saldo
+                    "valor_final": valor_final, "token_acesso": token, "status": "Pendente",
+                    "caminho_arquivo": path_s, "valor_desconto": valor_desconto, "valor_material": valor_material_calc,
+                    "entrada_valor": v_entrada_total, "saldo_valor": saldo_restante, "saldo_qtd_parcelas": q_saldo
                 })
                 
                 st.session_state.ultimo_token = token
                 st.session_state.step = 4
                 st.rerun()
 
+    # --- PASSO 4: PAINEL DE AÇÃO (FLUXO MANUAL) ---
     elif st.session_state.step == 4:
-        st.balloons()
-        st.success("✅ Contrato Gerado!")
-        st.code(f"https://nexusmed.portal/Assinatura?token={st.session_state.ultimo_token}")
-        if st.button("Novo Contrato"): 
+        st.success("✅ Contrato Gerado com Sucesso!")
+        
+        token = st.session_state.ultimo_token
+        aluno = st.session_state.form_data['aluno']
+        curso = st.session_state.form_data['curso']
+        
+        # Link de assinatura
+        # IMPORTANTE: Altere localhost para a URL real em produção
+        link_assinatura = f"http://localhost:8501/Assinatura?token={token}"
+
+        with st.container(border=True):
+            st.markdown("### 📢 Ações Disponíveis")
+            st.write("Escolha como deseja prosseguir com este contrato:")
+            
+            c1, c2 = st.columns(2)
+            
+            # OPÇÃO 1: BAIXAR PDF
+            if st.session_state.pdf_buffer_cache:
+                c1.download_button(
+                    label="📥 Baixar PDF do Contrato",
+                    data=st.session_state.pdf_buffer_cache,
+                    file_name=f"Contrato_{aluno['nome_completo']}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            
+            # OPÇÃO 2: ENVIAR POR E-MAIL (Ação Manual)
+            if c2.button("📧 Enviar para Assinatura (E-mail)", type="primary", use_container_width=True):
+                with st.spinner("Enviando e-mail..."):
+                    try:
+                        enviar_email_contrato(
+                            destinatario_email=aluno['email'],
+                            destinatario_nome=aluno['nome_completo'],
+                            link_assinatura=link_assinatura,
+                            nome_curso=curso['nome']
+                        )
+                        st.toast("E-mail enviado com sucesso!", icon="✅")
+                        st.success(f"Convite enviado para: {aluno['email']}")
+                    except Exception as e:
+                        st.error(f"Falha no envio: {e}")
+
+            st.divider()
+            
+            # OPÇÃO 3: COPIAR LINK (WhatsApp)
+            st.markdown("**🔗 Link para envio via WhatsApp:**")
+            st.code(link_assinatura, language="text")
+            st.caption("Copie o link acima e envie diretamente para o aluno.")
+
+        if st.button("⬅️ Iniciar Novo Contrato"):
             st.session_state.step = 1
             st.session_state.form_data = {}
             st.rerun()
