@@ -12,7 +12,6 @@ from src.document_engine.pdf_converter import PDFManager
 from src.utils.storage import StorageService
 from src.utils.email_sender import enviar_email_contrato
 
-# --- FUNÇÃO AUXILIAR PARA DATA POR EXTENSO ---
 def obter_mes_extenso(dt):
     meses = {
         1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
@@ -21,7 +20,6 @@ def obter_mes_extenso(dt):
     }
     return meses[dt.month]
 
-# Proteção de Acesso
 if not st.session_state.get("authenticated"):
     st.error("Por favor, faça login para acessar esta página.")
     st.stop()
@@ -32,7 +30,6 @@ def main():
     if "step" not in st.session_state: st.session_state.step = 1
     if "form_data" not in st.session_state: st.session_state.form_data = {}
 
-    # --- PASSO 1 E 2 (MANTIDOS CONFORME SEU CÓDIGO) ---
     if st.session_state.step == 1:
         st.subheader("Etapa 1: Selecionar Aluno")
         busca = st.text_input("Buscar Aluno por Nome ou CPF")
@@ -69,13 +66,11 @@ def main():
                     st.session_state.step = 3
                     st.rerun()
 
-    # --- PASSO 3: FINANCEIRO (ATUALIZADO COM REATIVIDADE E TABELAS) ---
     elif st.session_state.step == 3:
         st.subheader("Etapa 3: Financeiro")
         aluno = st.session_state.form_data['aluno']
         curso = st.session_state.form_data['curso']
         
-        # 1. CÁLCULO DE VALORES E DESTAQUE DO MATERIAL (Melhoria Visual)
         valor_bruto = float(curso.get('valor_bruto', 0))
         valor_material_calc = round(valor_bruto * 0.30, 2)
         
@@ -96,10 +91,10 @@ def main():
         st.success(f"### Valor Final do Contrato: {format_currency(valor_final)}")
         st.divider()
 
-        # 2. ENTRADA
+        # 1. ENTRADA REATIVA
         st.markdown("#### 1. Pagamento de Entrada / À Vista")
         ce1, ce2 = st.columns(2)
-        v_entrada_total = ce1.number_input("Valor Total da Entrada", 0.0, valor_final, 0.0)
+        v_entrada_total = ce1.number_input("Valor Total da Entrada", 0.0, valor_final, 0.0, step=50.0)
         q_entrada = ce2.selectbox("Qtd. Parcelas Entrada", [1, 2, 3])
         
         lista_entrada = []
@@ -107,30 +102,46 @@ def main():
         data_ultima_entrada = date.today()
 
         if v_entrada_total > 0:
-            v_unit_ent = round(v_entrada_total / q_entrada, 2)
-            for i in range(q_entrada):
-                # Ajuste para a última parcela da entrada (evitar erro de centavos)
-                if i == q_entrada - 1:
-                    v_p_sugerido = round(v_entrada_total - (v_unit_ent * (q_entrada - 1)), 2)
-                else:
-                    v_p_sugerido = v_unit_ent
+            # Sugestão inicial para P1
+            v_sugestao_base = round(v_entrada_total / q_entrada, 2)
+            
+            with st.container(border=True):
+                # Primeira Parcela (Gatilho de recálculo)
+                c_e1, c_e2, c_e3 = st.columns(3)
+                v_p1 = c_e1.number_input("Valor P1", 0.0, v_entrada_total, v_sugestao_base, key="vent_0")
+                d_p1 = c_e2.date_input("Vencimento P1", date.today(), key="dent_0")
+                f_p1 = c_e3.selectbox("Forma P1", opcoes_pagamento, key="fent_0")
+                lista_entrada.append({"numero": 1, "data": d_p1.strftime("%d/%m/%Y"), "valor": v_p1, "forma": f_p1, "valor_num": v_p1})
+                data_ultima_entrada = d_p1
 
-                with st.container(border=True):
-                    c_e1, c_e2, c_e3 = st.columns(3)
-                    v_p = c_e1.number_input(f"Valor P{i+1}", value=v_p_sugerido, key=f"vent_{i}")
-                    d_p = c_e2.date_input(f"Vencimento P{i+1}", value=date.today() + relativedelta(days=i*2), key=f"dent_{i}")
-                    f_p = c_e3.selectbox(f"Forma P{i+1}", opcoes_pagamento, key=f"fent_{i}")
+                # Parcelas Restantes com Recálculo Automático
+                if q_entrada > 1:
+                    v_restante_entrada = round(v_entrada_total - v_p1, 2)
+                    qtd_restante = q_entrada - 1
                     
-                    lista_entrada.append({
-                        "numero": i+1, 
-                        "data": d_p.strftime("%d/%m/%Y"), 
-                        "valor": format_currency(v_p), 
-                        "forma": f_p,
-                        "valor_num": v_p # Usado para cálculo interno
-                    })
-                    data_ultima_entrada = d_p
+                    if qtd_restante > 0:
+                         v_sugestao_resto = round(v_restante_entrada / qtd_restante, 2)
+                    else:
+                         v_sugestao_resto = 0
 
-        # 3. SALDO REMANESCENTE (CÁLCULO E EXIBIÇÃO DA LISTA)
+                    for i in range(1, q_entrada):
+                        c_ex1, c_ex2, c_ex3 = st.columns(3)
+                        
+                        # Limita o input ao que sobra do total
+                        v_p_resto = c_ex1.number_input(f"Valor P{i+1}", 0.0, v_restante_entrada, v_sugestao_resto, key=f"vent_{i}")
+                        d_p_resto = c_ex2.date_input(f"Vencimento P{i+1}", d_p1 + relativedelta(days=i*2), key=f"dent_{i}")
+                        f_p_resto = c_ex3.selectbox(f"Forma P{i+1}", opcoes_pagamento, key=f"fent_{i}")
+                        
+                        lista_entrada.append({"numero": i+1, "data": d_p_resto.strftime("%d/%m/%Y"), "valor": v_p_resto, "forma": f_p_resto, "valor_num": v_p_resto})
+                        v_restante_entrada = round(v_restante_entrada - v_p_resto, 2)
+                        data_ultima_entrada = d_p_resto
+
+            # Trava de soma excedente
+            soma_entrada_conf = sum(p['valor_num'] for p in lista_entrada)
+            if round(soma_entrada_conf, 2) > round(v_entrada_total, 2):
+                st.error(f"⚠️ A soma das parcelas ({format_currency(soma_entrada_conf)}) excede o valor da entrada!")
+
+        # 2. SALDO EM DROPDOWN (EXPANDER)
         saldo_restante = round(valor_final - v_entrada_total, 2)
         lista_saldo = []
         
@@ -138,58 +149,50 @@ def main():
             st.divider()
             st.markdown(f"#### 2. Saldo Remanescente: {format_currency(saldo_restante)}")
             
-            cs1, cs2, cs3 = st.columns(3)
-            q_saldo = cs1.number_input("Qtd Parcelas Saldo", 1, 36, 12)
-            d_saldo_ini = cs2.date_input("1º Vencimento Saldo", value=data_ultima_entrada + relativedelta(months=1))
-            f_saldo = cs3.selectbox("Forma Saldo", ["Boleto", "Cartão de Crédito", "PIX"])
-            
-            # Cálculo com ajuste de centavos
-            valor_base_saldo = round(saldo_restante / q_saldo, 2)
-            soma_acumulada_saldo = 0
-            
-            for i in range(q_saldo):
-                if i == q_saldo - 1:
-                    v_parc = round(saldo_restante - soma_acumulada_saldo, 2)
-                else:
-                    v_parc = valor_base_saldo
+            with st.expander("📊 Ver Detalhamento das Parcelas de Saldo (Clique para abrir)"):
+                cs1, cs2, cs3 = st.columns(3)
+                q_saldo = cs1.number_input("Qtd Parcelas Saldo", 1, 36, 12)
+                d_saldo_ini = cs2.date_input("1º Vencimento Saldo", value=data_ultima_entrada + relativedelta(months=1))
+                f_saldo = cs3.selectbox("Forma Saldo", ["Boleto", "Cartão de Crédito", "PIX"])
                 
-                soma_acumulada_saldo += v_parc
-                venc_p = d_saldo_ini + relativedelta(months=i)
+                v_base_saldo = round(saldo_restante / q_saldo, 2)
+                soma_acumulada_saldo = 0
                 
-                lista_saldo.append({
-                    "Parcela": f"{i+1}/{q_saldo}",
-                    "Vencimento": venc_p.strftime("%d/%m/%Y"),
-                    "Valor": format_currency(v_parc),
-                    "Forma": f_saldo,
-                    "valor_num": v_parc
-                })
+                for i in range(q_saldo):
+                    if i == q_saldo - 1:
+                        v_parc = round(saldo_restante - soma_acumulada_saldo, 2)
+                    else:
+                        v_parc = v_base_saldo
+                    
+                    soma_acumulada_saldo += v_parc
+                    venc_p = d_saldo_ini + relativedelta(months=i)
+                    
+                    lista_saldo.append({
+                        "Parcela": f"{i+1}/{q_saldo}",
+                        "Vencimento": venc_p.strftime("%d/%m/%Y"),
+                        "Valor": format_currency(v_parc),
+                        "Forma": f_saldo,
+                        "valor_num": v_parc
+                    })
 
-            # EXIBIÇÃO DA TABELA DE SALDO (O que foi solicitado)
-            st.dataframe(lista_saldo, column_order=("Parcela", "Vencimento", "Valor", "Forma"), 
-                         use_container_width=True, hide_index=True)
+                st.table(lista_saldo)
 
-        # 4. VALIDAÇÃO DE TRAVA FINANCEIRA
-        soma_entrada = sum(p['valor_num'] for p in lista_entrada)
-        soma_saldo = sum(p['valor_num'] for p in lista_saldo)
-        total_pactuado = round(soma_entrada + soma_saldo, 2)
-        
-        conferido = abs(total_pactuado - valor_final) < 0.01
+        # 3. VALIDAÇÃO FINAL
+        soma_total_dist = sum(p['valor_num'] for p in lista_entrada) + sum(p['valor_num'] for p in lista_saldo)
+        conferido = abs(round(soma_total_dist, 2) - valor_final) < 0.01
 
         st.divider()
         if not conferido:
-            st.error(f"❌ Erro matemático: A soma das parcelas ({format_currency(total_pactuado)}) não fecha com o total ({format_currency(valor_final)}).")
-        else:
-            st.success("✅ Conciliação financeira aprovada.")
+            st.error(f"❌ Erro matemático: Soma ({format_currency(soma_total_dist)}) difere do total ({format_currency(valor_final)}).")
         
         c_b1, c_b2 = st.columns([1, 4])
         if c_b1.button("Voltar"): st.session_state.step = 2; st.rerun()
         
         if c_b2.button("🚀 Gerar Contrato", type="primary", disabled=not conferido, use_container_width=True):
-            with st.spinner("Processando Documento..."):
+            with st.spinner("Gerando Documentos..."):
                 token = str(uuid.uuid4())
                 agora = datetime.now()
                 
-                # Contexto para as tags do Word (Baseado no seu modelo_contrato_V2.docx)
                 ctx_doc = {
                     'nome': aluno['nome_completo'].upper(),
                     'cpf': format_cpf(aluno['cpf']),
@@ -206,49 +209,41 @@ def main():
                     'valor_desconto': format_currency(valor_desconto),
                     'pencentual_desconto': f"{percent_desc}%",
                     'valor_final': format_currency(valor_final),
-                    'valor_material': format_currency(valor_material_calc), # Para Cláusula 13ª
+                    'valor_material': format_currency(valor_material_calc),
                     'dia': agora.day,
                     'mês': obter_mes_extenso(agora),
                     'ano': agora.year
                 }
 
-                # Execução do motor de PDF
                 processor = ContractProcessor("assets/modelo_contrato_V2.docx")
-                # Importante: lista_entrada e lista_saldo devem conter dicionários com chaves compatíveis com as tabelas do Word
-                docx_buffer = processor.generate_docx(ctx_doc, lista_entrada, lista_saldo)
+                # Converte as parcelas para o formato esperado pelo Word
+                tab_ent = [{"n": p["numero"], "vencimento": p["data"], "valor": p["valor"], "forma": p["forma"]} for p in lista_entrada]
+                tab_sal = [{"n": p["Parcela"], "vencimento": p["Vencimento"], "valor": p["Valor"], "forma": p["Forma"]} for p in lista_saldo]
+                
+                docx_buffer = processor.generate_docx(ctx_doc, tab_ent, tab_sal)
                 pdf_buffer = PDFManager.convert_docx_to_pdf(docx_buffer)
                 
                 path_s, _ = StorageService.upload_minuta(pdf_buffer, aluno['nome_completo'], curso['nome'])
                 
-                novo_contrato = {
-                    "aluno_id": aluno['id'], 
-                    "turma_id": st.session_state.form_data['turma']['id'],
-                    "valor_final": valor_final, 
-                    "token_acesso": token, 
-                    "status": "Pendente",
-                    "caminho_arquivo": path_s, 
-                    "valor_desconto": valor_desconto, 
-                    "valor_material": valor_material_calc
-                }
-                ContratoRepository.criar_contrato(novo_contrato)
+                ContratoRepository.criar_contrato({
+                    "aluno_id": aluno['id'], "turma_id": st.session_state.form_data['turma']['id'],
+                    "valor_final": valor_final, "token_acesso": token, "status": "Pendente",
+                    "caminho_arquivo": path_s, "valor_desconto": valor_desconto, "valor_material": valor_material_calc,
+                    # Salva detalhes financeiros para reconstrução
+                    "entrada_valor": v_entrada_total,
+                    "saldo_valor": saldo_restante,
+                    "saldo_qtd_parcelas": q_saldo
+                })
                 
                 st.session_state.ultimo_token = token
                 st.session_state.step = 4
                 st.rerun()
 
-    # --- PASSO 4: SUCESSO ---
     elif st.session_state.step == 4:
         st.balloons()
-        st.success("✅ Contrato Gerado com Sucesso!")
-        url_assinatura = f"https://nexusmed.portal/Assinatura?token={st.session_state.ultimo_token}"
-        st.code(url_assinatura, language="markdown")
-        
-        st.info("O arquivo foi salvo no Storage e o registro criado no banco de dados.")
-        
-        if st.button("Gerar Outro Contrato"):
-            st.session_state.step = 1
-            st.session_state.form_data = {}
-            st.rerun()
+        st.success("✅ Contrato Gerado!")
+        st.code(f"https://nexusmed.portal/Assinatura?token={st.session_state.ultimo_token}")
+        if st.button("Novo Contrato"): st.session_state.step = 1; st.rerun()
 
 if __name__ == "__main__":
     main()
