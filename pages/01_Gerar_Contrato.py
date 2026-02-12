@@ -13,7 +13,6 @@ from src.document_engine.pdf_converter import PDFManager
 from src.utils.storage import StorageService
 from src.utils.email_sender import enviar_email_contrato
 
-# --- FUNÇÃO AUXILIAR PARA DATA POR EXTENSO ---
 def obter_mes_extenso(dt):
     meses = {
         1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
@@ -30,7 +29,6 @@ if not st.session_state.get("authenticated"):
 def main():
     st.title("📄 Gerador de Contratos")
     
-    # Inicialização de Variáveis de Sessão
     if "step" not in st.session_state: st.session_state.step = 1
     if "form_data" not in st.session_state: st.session_state.form_data = {}
 
@@ -78,7 +76,6 @@ def main():
         aluno = st.session_state.form_data['aluno']
         curso = st.session_state.form_data['curso']
         
-        # 1. CÁLCULO DE VALORES
         valor_bruto = float(curso.get('valor_bruto', 0))
         valor_material_calc = round(valor_bruto * 0.30, 2)
         
@@ -99,7 +96,7 @@ def main():
         st.success(f"### Valor Final do Contrato: {format_currency(valor_final)}")
         st.divider()
 
-        # 2. ENTRADA - LÓGICA DE DISTRIBUIÇÃO SEGURA
+        # 2. ENTRADA - LÓGICA DE CASCATA BLINDADA
         st.markdown("#### 1. Pagamento de Entrada / À Vista")
         ce1, ce2 = st.columns(2)
         v_entrada_total = ce1.number_input("Valor Total da Entrada", 0.0, valor_final, 0.0, step=50.0)
@@ -110,63 +107,58 @@ def main():
         data_ultima_entrada = date.today()
 
         if v_entrada_total > 0:
-            # Cálculo inicial da sugestão (divisão igualitária)
-            v_sugestao_inicial = round(v_entrada_total / q_entrada, 2)
+            # Saldo disponível para distribuir nas parcelas
+            saldo_disponivel = v_entrada_total
             
-            with st.container(border=True):
-                # --- PARCELA 1 (Mestra) ---
-                c_e1, c_e2, c_e3 = st.columns(3)
-                # A P1 pode ser até o valor total da entrada
-                v_p1 = c_e1.number_input("Valor P1", 0.0, v_entrada_total, v_sugestao_inicial, key="vent_0")
-                d_p1 = c_e2.date_input("Vencimento P1", date.today(), key="dent_0")
-                f_p1 = c_e3.selectbox("Forma P1", opcoes_pagamento, key="fent_0")
-                
-                lista_entrada.append({"numero": 1, "data": d_p1.strftime("%d/%m/%Y"), "valor": format_currency(v_p1), "forma": f_p1, "valor_num": v_p1})
-                data_ultima_entrada = d_p1
-
-                # --- PARCELAS RESTANTES (Recálculo Dinâmico) ---
-                if q_entrada > 1:
-                    # Quanto sobrou após a P1?
-                    v_restante_entrada = round(v_entrada_total - v_p1, 2)
+            for i in range(q_entrada):
+                with st.container(border=True):
+                    c_e1, c_e2, c_e3 = st.columns(3)
                     
-                    for i in range(1, q_entrada):
-                        # Quantas parcelas faltam preencher?
-                        parcelas_faltantes = q_entrada - i
+                    # Chave única para o widget
+                    key_val = f"vent_{i}"
+                    
+                    # Definição do Limite Máximo para esta parcela
+                    max_permitido = float(round(saldo_disponivel, 2))
+                    
+                    # Lógica da Última Parcela: Ela deve ser EXATAMENTE o que sobrou.
+                    if i == q_entrada - 1:
+                        v_p = c_e1.number_input(
+                            f"Valor P{i+1} (Saldo Restante)", 
+                            value=max_permitido, 
+                            disabled=True, # Bloqueia edição para garantir a soma exata
+                            key=key_val
+                        )
+                    else:
+                        # CORREÇÃO DO ERRO 'ValueAboveMax':
+                        # Antes de criar o widget, verificamos se o valor que está na memória do Streamlit (session_state)
+                        # é maior que o novo máximo permitido. Se for, forçamos a atualização.
+                        if key_val in st.session_state:
+                            if st.session_state[key_val] > max_permitido:
+                                st.session_state[key_val] = max_permitido
                         
-                        # Sugestão é o restante dividido pelo que falta (divisão simples)
-                        if parcelas_faltantes > 0:
-                            v_sugestao_resto = round(v_restante_entrada / parcelas_faltantes, 2)
-                        else:
-                            v_sugestao_resto = v_restante_entrada
-
-                        # CORREÇÃO CRÍTICA DO ERRO "ValueAboveMax":
-                        # O valor sugerido (value) nunca pode ser maior que o restante disponível (max_value)
-                        # Se o restante for 0, o max é 0 e o value deve ser 0.
-                        max_val_input = max(0.0, v_restante_entrada)
-                        safe_value = min(v_sugestao_resto, max_val_input)
-
-                        c_ex1, c_ex2, c_ex3 = st.columns(3)
+                        # Sugestão inicial (divisão proporcional)
+                        sugestao = round(saldo_disponivel / (q_entrada - i), 2)
                         
-                        v_p_resto = c_ex1.number_input(
+                        v_p = c_e1.number_input(
                             f"Valor P{i+1}", 
                             min_value=0.0, 
-                            max_value=max_val_input, 
-                            value=safe_value, 
-                            key=f"vent_{i}"
+                            max_value=max_permitido,
+                            value=min(sugestao, max_permitido), 
+                            key=key_val
                         )
-                        d_p_resto = c_ex2.date_input(f"Vencimento P{i+1}", d_p1 + relativedelta(days=i*30), key=f"dent_{i}")
-                        f_p_resto = c_ex3.selectbox(f"Forma P{i+1}", opcoes_pagamento, key=f"fent_{i}")
-                        
-                        lista_entrada.append({"numero": i+1, "data": d_p_resto.strftime("%d/%m/%Y"), "valor": format_currency(v_p_resto), "forma": f_p_resto, "valor_num": v_p_resto})
-                        
-                        # Atualiza o restante para a próxima iteração
-                        v_restante_entrada = round(v_restante_entrada - v_p_resto, 2)
-                        data_ultima_entrada = d_p_resto
 
-            # Validação Visual da Entrada
-            soma_entrada_conf = sum(p['valor_num'] for p in lista_entrada)
-            if round(soma_entrada_conf, 2) != round(v_entrada_total, 2):
-                 st.warning(f"⚠️ Atenção: A soma das parcelas (R$ {soma_entrada_conf}) difere do total da entrada (R$ {v_entrada_total}). Ajuste os valores.")
+                    # Data e Forma
+                    d_p = c_e2.date_input(f"Vencimento P{i+1}", value=date.today() + relativedelta(days=i*30), key=f"dent_{i}")
+                    f_p = c_e3.selectbox(f"Forma P{i+1}", opcoes_pagamento, key=f"fent_{i}")
+                    
+                    lista_entrada.append({
+                        "numero": i+1, "data": d_p.strftime("%d/%m/%Y"), 
+                        "valor": format_currency(v_p), "forma": f_p, "valor_num": v_p
+                    })
+                    
+                    # Subtrai o valor definido do saldo disponível para a próxima parcela
+                    saldo_disponivel = round(saldo_disponivel - v_p, 2)
+                    data_ultima_entrada = d_p
 
         # 3. SALDO REMANESCENTE
         saldo_restante = round(valor_final - v_entrada_total, 2)
@@ -177,7 +169,7 @@ def main():
             st.markdown(f"#### 2. Saldo Remanescente: {format_currency(saldo_restante)}")
             
             # --- DROPDOWN (EXPANDER) PARA LIMPAR A TELA ---
-            with st.expander("📊 Clique aqui para configurar o parcelamento do Saldo", expanded=True):
+            with st.expander("📊 Clique aqui para visualizar as parcelas do Saldo", expanded=False):
                 cs1, cs2, cs3 = st.columns(3)
                 q_saldo = cs1.number_input("Qtd Parcelas Saldo", 1, 36, 12)
                 d_saldo_ini = cs2.date_input("1º Vencimento Saldo", value=data_ultima_entrada + relativedelta(months=1))
@@ -209,7 +201,6 @@ def main():
         # 4. VALIDAÇÃO FINAL E GERAÇÃO
         soma_total_dist = sum(p['valor_num'] for p in lista_entrada) + sum(p['valor_num'] for p in lista_saldo)
         
-        # Margem de erro de 5 centavos para flutuações de ponto flutuante
         conferido = abs(round(soma_total_dist, 2) - valor_final) <= 0.05
 
         st.divider()
@@ -226,7 +217,6 @@ def main():
                 token = str(uuid.uuid4())
                 agora = datetime.now()
                 
-                # Contexto para as tags do Word
                 ctx_doc = {
                     'nome': aluno['nome_completo'].upper(),
                     'cpf': format_cpf(aluno['cpf']),
@@ -249,8 +239,6 @@ def main():
                     'ano': agora.year
                 }
 
-                # Preparação das tabelas para o Processor
-                # Atenção: O processor espera chaves que batam com o código dele (numero/data/valor/forma)
                 tab_ent = [{"n": p["numero"], "vencimento": p["data"], "valor": p["valor"], "forma": p["forma"]} for p in lista_entrada]
                 tab_sal = [{"n": p["Parcela"], "vencimento": p["Vencimento"], "valor": p["Valor"], "forma": p["Forma"]} for p in lista_saldo]
                 
@@ -260,7 +248,6 @@ def main():
                 
                 path_s, _ = StorageService.upload_minuta(pdf_buffer, aluno['nome_completo'], curso['nome'])
                 
-                # Salvar no Banco
                 ContratoRepository.criar_contrato({
                     "aluno_id": aluno['id'], 
                     "turma_id": st.session_state.form_data['turma']['id'],
@@ -270,7 +257,6 @@ def main():
                     "caminho_arquivo": path_s, 
                     "valor_desconto": valor_desconto, 
                     "valor_material": valor_material_calc,
-                    # Campos extras para auditoria financeira se necessário
                     "entrada_valor": v_entrada_total,
                     "saldo_valor": saldo_restante,
                     "saldo_qtd_parcelas": q_saldo
