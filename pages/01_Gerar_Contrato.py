@@ -86,7 +86,7 @@ def main():
             st.session_state.step = 1
             st.rerun()
 
-    # --- PASSO 3: FINANCEIRO (LÓGICA FINAL) ---
+    # --- PASSO 3: FINANCEIRO ---
     elif st.session_state.step == 3:
         st.subheader("Etapa 3: Financeiro")
         
@@ -115,51 +115,69 @@ def main():
 
         st.divider()
 
-        # 2. ENTRADA (Até 3x, Manual na 1ª, Automático no resto)
+        # 2. ENTRADA (LÓGICA AJUSTADA: Tudo Editável)
         st.markdown("#### 1. Entrada")
         ce1, ce2 = st.columns([2, 1])
         v_entrada_total = ce1.number_input("Valor Total da Entrada", min_value=0.0, max_value=valor_final, value=0.0, step=50.0)
         q_entrada = ce2.selectbox("Parcelas Entrada", [1, 2, 3])
         
         lista_entrada = []
+        opcoes_pagamento = ["PIX", "Cartão de Crédito", "Boleto", "Dinheiro", "Cartão de Débito"]
+
         if v_entrada_total > 0:
+            st.caption("Detalhamento das Parcelas da Entrada:")
+            
+            # --- Parcela 1 (Editável) ---
             with st.container(border=True):
-                st.caption("Detalhamento da Entrada")
-                
-                # Parcela 1 (Editável)
                 c_ep1, c_ep2, c_ep3 = st.columns(3)
                 v_sugestao = v_entrada_total / q_entrada
                 
-                v_p1 = c_ep1.number_input("Valor 1ª Parc", value=v_sugestao, step=10.0, key="v_e1")
-                d_p1 = c_ep2.date_input("Vencimento 1ª", value=date.today(), key="d_e1")
-                f_p1 = c_ep3.selectbox("Forma 1ª", ["PIX", "Cartão de Crédito", "Boleto"], key="f_e1")
+                c_ep1.markdown("**1ª Parcela**")
+                v_p1 = c_ep1.number_input("Valor", value=v_sugestao, step=10.0, key="v_e1")
+                d_p1 = c_ep2.date_input("Vencimento", value=date.today(), key="d_e1")
+                f_p1 = c_ep3.selectbox("Forma", opcoes_pagamento, key="f_e1")
                 
                 lista_entrada.append({"n": 1, "vencimento": d_p1, "valor": v_p1, "forma": f_p1})
                 
-                # Parcelas Seguintes (Automáticas para fechar a conta)
-                resto = v_entrada_total - v_p1
-                if q_entrada > 1:
-                    qtd_restante = q_entrada - 1
-                    val_restante = resto / qtd_restante if resto > 0 else 0
+            # --- Parcelas Seguintes (Editáveis) ---
+            resto = v_entrada_total - v_p1
+            
+            if q_entrada > 1:
+                qtd_restante = q_entrada - 1
+                # Divide o resto igualmente
+                val_restante_base = resto / qtd_restante if resto > 0 else 0
+                
+                for i in range(qtd_restante):
+                    n_parc = i + 2
                     
-                    for i in range(qtd_restante):
-                        n_parc = i + 2
-                        d_prox = d_p1 + relativedelta(months=i+1)
+                    with st.container(border=True):
+                        col_a, col_b, col_c = st.columns(3)
                         
-                        st.markdown(f"**{n_parc}ª Parcela**: {format_currency(val_restante)} em {d_prox.strftime('%d/%m/%Y')} ({f_p1})")
+                        col_a.markdown(f"**{n_parc}ª Parcela**")
+                        # Valor calculado automaticamente para fechar a conta (apenas leitura ou editável se preferir)
+                        col_a.caption(f"Valor Calculado: {format_currency(val_restante_base)}")
+                        
+                        # Data Editável (Sugere +30 dias, mas usuário muda)
+                        d_sugestao = d_p1 + relativedelta(months=i+1)
+                        d_real = col_b.date_input(f"Vencimento", value=d_sugestao, key=f"d_e{n_parc}")
+                        
+                        # Forma Editável (Sugere a mesma da anterior, mas usuário muda)
+                        idx_forma = opcoes_pagamento.index(f_p1) if f_p1 in opcoes_pagamento else 0
+                        f_real = col_c.selectbox(f"Forma", opcoes_pagamento, index=idx_forma, key=f"f_e{n_parc}")
+                        
                         lista_entrada.append({
                             "n": n_parc, 
-                            "vencimento": d_prox, 
-                            "valor": val_restante, 
-                            "forma": f_p1 # Repete a forma da primeira
+                            "vencimento": d_real, 
+                            "valor": val_restante_base, 
+                            "forma": f_real 
                         })
             
-            # Validação visual
+            # Validação visual de soma
             soma_ent = sum(p['valor'] for p in lista_entrada)
             if abs(soma_ent - v_entrada_total) > 0.10:
-                st.warning(f"⚠️ Atenção: A soma das parcelas (R$ {soma_ent:.2f}) não bate com o total da entrada.")
+                st.warning(f"⚠️ A soma das parcelas (R$ {soma_ent:.2f}) difere do Total da Entrada.")
 
-        # 3. SALDO RESTANTE (Até 36x, Automático)
+        # 3. SALDO RESTANTE (Lógica Mantida: Automático)
         saldo = valor_final - v_entrada_total
         lista_saldo = []
         
@@ -170,7 +188,7 @@ def main():
             cs1, cs2, cs3 = st.columns(3)
             q_saldo = cs1.number_input("Qtd Parcelas (Máx 36)", min_value=1, max_value=36, value=1)
             d_saldo_ini = cs2.date_input("1º Vencimento Saldo", value=date.today() + relativedelta(months=1))
-            f_saldo = cs3.selectbox("Forma de Pagamento", ["Boleto", "Cartão de Crédito", "PIX"], key="forma_saldo")
+            f_saldo = cs3.selectbox("Forma de Pagamento Saldo", ["Boleto", "Cartão de Crédito", "PIX"], key="forma_saldo")
             
             # Gerar Lista Automática de Parcelas
             valor_parc_saldo = saldo / q_saldo
@@ -199,7 +217,7 @@ def main():
             
         if cb2.button("🚀 Gerar Contrato e Link de Assinatura", type="primary", use_container_width=True):
             try:
-                # Prepara dados para JSON (datas precisam virar string)
+                # Serialização para JSON
                 detalhes_entrada_serial = [
                     {**p, "vencimento": p["vencimento"].isoformat()} for p in lista_entrada
                 ]
@@ -217,20 +235,19 @@ def main():
                     
                     # Entrada
                     "entrada_valor": v_entrada_total,
-                    "entrada_detalhes": detalhes_entrada_serial, # Salva lista completa
+                    "entrada_detalhes": detalhes_entrada_serial,
                     
                     # Saldo
                     "saldo_valor": saldo,
                     "saldo_qtd_parcelas": len(lista_saldo),
                     "saldo_forma_pagamento": f_saldo if saldo > 0 else "À Vista",
-                    "saldo_detalhes": detalhes_saldo_serial, # Salva lista completa
+                    "saldo_detalhes": detalhes_saldo_serial,
                     
                     "token_acesso": str(uuid.uuid4()),
                     "status": "Pendente",
                     "created_at": datetime.now().isoformat()
                 }
                 
-                # Salva no Supabase
                 ContratoRepository.criar_contrato(novo_contrato)
                 
                 st.session_state.ultimo_token = novo_contrato["token_acesso"]
@@ -246,6 +263,7 @@ def main():
         st.success("Contrato Criado com Sucesso!")
         
         token = st.session_state.get('ultimo_token', '')
+        # Ajuste para sua URL real
         link = f"https://nexusmed-portal.streamlit.app/Assinatura?token={token}"
         
         st.markdown("### 🔗 Link para o Aluno")
