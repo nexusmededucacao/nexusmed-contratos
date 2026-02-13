@@ -60,11 +60,7 @@ class PDFManager:
         can.setFont("Helvetica", 7)
         can.setFillColor(black)
         
-        # 1. Fundo Branco (Retângulo) para "Apagar" o rodapé original e garantir leitura
-        # x, y, width, height (Ajustado para o rodapé da página A4)
-        can.setFillColor(white)
-        can.rect(30, 10, 535, 95, fill=1, stroke=0) 
-        
+       
         # 2. Dados do Texto
         can.setFillColor(black)
         data_str = data_assinatura.strftime("%d/%m/%Y às %H:%M:%S (GMT-3)")
