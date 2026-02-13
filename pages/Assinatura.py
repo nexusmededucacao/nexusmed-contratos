@@ -13,17 +13,15 @@ from src.database.connection import supabase
 # Configuração da página
 st.set_page_config(page_title="Assinatura Digital | NexusMed", layout="centered")
 
-# URL Base para o carimbo (Ajuste conforme seu ambiente)
-# Em produção no Streamlit Cloud, geralmente não conseguimos pegar a URL exata via código facilmente
-# Então é bom definir ou tentar inferir.
+# URL Base para o carimbo
 BASE_URL = "https://nexusmed-contratos.streamlit.app"
 
-# CSS Clean
+# CSS Clean (Simplificado pois não tem mais iframe)
 st.markdown("""
     <style>
     [data-testid="stSidebar"], [data-testid="stHeader"], footer {display: none;}
     .main {background-color: #f8fafc;}
-    iframe {border: 1px solid #e2e8f0; border-radius: 8px; background-color: white;}
+    .stButton button {font-weight: bold;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -45,55 +43,78 @@ def main():
 
     # --- TELA 1: JÁ ASSINADO ---
     if contrato['status'] == 'Assinado':
-        st.success(f"✅ Contrato assinado em {format_date_br(contrato.get('data_aceite'))}.")
+        st.success(f"✅ Contrato assinado com sucesso em {format_date_br(contrato.get('data_aceite'))}.")
+        
         url_final = contrato.get('caminho_arquivo')
+        
         if url_final:
-            st.link_button("📥 BAIXAR CONTRATO ASSINADO (PDF)", url_final, type="primary", use_container_width=True)
-            st.divider()
-            st.markdown(f'<iframe src="{url_final}" width="100%" height="600px"></iframe>', unsafe_allow_html=True)
+            st.markdown("### Documento Finalizado")
+            st.info("Seu documento já foi processado e armazenado com segurança.")
+            
+            # BOTÃO DE DOWNLOAD (PÓS-ASSINATURA)
+            st.link_button(
+                "📥 FAÇA O DOWNLOAD DO SEU CONTRATO ASSINADO", 
+                url_final, 
+                type="primary", 
+                use_container_width=True
+            )
+        else:
+            st.warning("O documento está sendo processado. Atualize a página em instantes.")
         return
 
-    # --- TELA 2: ASSINATURA ---
+    # --- TELA 2: PENDENTE DE ASSINATURA ---
     aluno = contrato['alunos']
-    curso = contrato['turmas']['cursos']
     url_original = contrato.get('caminho_arquivo')
 
     st.title("🖋️ Assinatura Digital")
     st.write(f"Olá, **{aluno['nome_completo']}**.")
-    st.info("Revise o documento oficial abaixo:")
+    st.markdown("Para prosseguir, é obrigatório baixar e ler o documento original.")
 
     if url_original:
-        st.markdown(f'<iframe src="{url_original}" width="100%" height="600px"></iframe>', unsafe_allow_html=True)
-        st.markdown(f"<div style='text-align: right;'><a href='{url_original}' target='_blank'>🔍 Abrir em nova guia</a></div>", unsafe_allow_html=True)
+        # ÁREA DE DOWNLOAD (PRÉ-ASSINATURA)
+        with st.container(border=True):
+            st.warning("⚠️ Passo Obrigatório: Leia o documento antes de concordar.")
+            st.link_button(
+                "📄 FAÇA O DOWNLOAD E LEIA SEU CONTRATO ANTES DE ASSINAR", 
+                url_original, 
+                type="primary", 
+                use_container_width=True
+            )
     else:
-        st.error("Arquivo original não encontrado.")
+        st.error("Erro: Arquivo original não encontrado. Contate o suporte.")
         st.stop()
 
     st.divider()
-    st.subheader("Confirmação")
+
+    # --- FORMULÁRIO DE ASSINATURA ---
+    st.subheader("Confirmação e Aceite")
     
     c1, c2 = st.columns(2)
     nome_input = c1.text_input("Nome Completo")
-    cpf_input = c2.text_input("CPF")
+    cpf_input = c2.text_input("CPF (Apenas números)")
     
-    termos = st.checkbox("Li e concordo com os termos.")
+    termos = st.checkbox("Declaro que BAIXEI, LI e CONCORDO com todos os termos do contrato acima.")
 
     if st.button("✍️ ASSINAR DIGITALMENTE", type="primary", use_container_width=True):
         input_cpf_limpo = limpar_cpf(cpf_input)
         aluno_cpf_limpo = limpar_cpf(aluno['cpf'])
 
-        if not nome_input or input_cpf_limpo != aluno_cpf_limpo or not termos:
-            st.error("Dados incorretos ou termos não aceitos.")
+        if not nome_input:
+            st.error("Preencha seu nome completo.")
+        elif input_cpf_limpo != aluno_cpf_limpo:
+            st.error("O CPF informado não corresponde ao cadastro deste contrato.")
+        elif not termos:
+            st.error("Você precisa confirmar a leitura e o aceite dos termos.")
         else:
-            with st.spinner("Registrando assinatura..."):
+            with st.spinner("Registrando assinatura e gerando via final..."):
                 try:
                     # 1. Download do Original
                     response = requests.get(url_original)
                     if response.status_code != 200:
-                        raise Exception("Falha ao baixar contrato original.")
+                        raise Exception("Falha ao baixar contrato original para processamento.")
                     pdf_buffer = io.BytesIO(response.content)
 
-                    # 2. Dados do Carimbo
+                    # 2. Dados de Auditoria
                     try:
                         from streamlit.web.server.websocket_headers import _get_websocket_headers
                         ip_usuario = _get_websocket_headers().get("X-Forwarded-For", "0.0.0.0").split(",")[0]
@@ -103,26 +124,25 @@ def main():
                     # Ajuste de Fuso Horário (GMT-3)
                     timestamp_gmt3 = datetime.now() - timedelta(hours=3)
                     
-                    # Link Completo para o Carimbo
+                    # Link e Hash
                     link_completo = f"{BASE_URL}/Assinatura?token={token}"
-                    
-                    # Hash de Autenticação
                     hash_auth = hashlib.sha256(f"{token}{input_cpf_limpo}{timestamp_gmt3.isoformat()}".encode()).hexdigest().upper()
 
-                    # 3. Gera Carimbo com NOVOS ARGUMENTOS (link e hash_auth)
+                    # 3. Gera Carimbo
                     stamp_text = PDFManager.create_signature_stamp(
                         data_assinatura=timestamp_gmt3,
                         nome_aluno=nome_input.upper(),
                         cpf=format_cpf(input_cpf_limpo),
                         email=aluno.get('email', 'N/A'),
                         ip=ip_usuario,
-                        link=link_completo,    # Argumento Novo
-                        hash_auth=hash_auth    # Argumento Novo
+                        link=link_completo,
+                        hash_auth=hash_auth
                     )
                     
+                    # Aplica Carimbo
                     pdf_final = PDFManager.apply_stamp_to_pdf(pdf_buffer, stamp_text)
 
-                    # 4. Upload e Salvar
+                    # 4. Upload do Assinado
                     nome_arq = f"Contrato_{StorageService.sanitizar_nome(aluno['nome_completo'])}_ASSINADO.pdf"
                     path = f"minutas/{nome_arq}"
 
@@ -134,6 +154,7 @@ def main():
                     
                     nova_url = supabase.storage.from_("contratos").get_public_url(path)
 
+                    # 5. Atualiza Banco
                     payload = {
                         "status": "Assinado",
                         "data_aceite": timestamp_gmt3.isoformat(),
@@ -149,7 +170,7 @@ def main():
                     st.rerun()
 
                 except Exception as e:
-                    st.error(f"Erro: {e}")
+                    st.error(f"Erro ao processar assinatura: {e}")
 
 if __name__ == "__main__":
     main()
