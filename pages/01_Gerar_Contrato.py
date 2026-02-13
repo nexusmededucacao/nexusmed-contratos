@@ -245,8 +245,7 @@ def main():
                         'valor_desconto': format_currency(v_desconto).replace("R$", "").strip(),
                         'valor_final': format_currency(v_final).replace("R$", "").strip(),
                         'valor_material': format_currency(valor_material_calc).replace("R$", "").strip(),
-                        'bolsista': "SIM" if percent_desc > 0 else "NÃO",
-                        
+                                                
                         # Datas
                         'dia': str(agora.day), 
                         'mês': obter_mes_extenso(agora).lower(), 
