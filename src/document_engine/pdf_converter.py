@@ -6,7 +6,7 @@ import streamlit as st
 from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.colors import grey
+from reportlab.lib.colors import black, white # Alterado para usar preto e branco
 from datetime import datetime
 
 class PDFManager:
@@ -19,6 +19,7 @@ class PDFManager:
     def convert_docx_to_pdf(docx_bytes: io.BytesIO) -> io.BytesIO:
         """
         Converte DOCX para PDF usando o LibreOffice (Headless).
+        (LÓGICA PRESERVADA)
         """
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_docx_path = os.path.join(temp_dir, "temp_contract.docx")
@@ -48,28 +49,62 @@ class PDFManager:
                 return None
 
     @staticmethod
-    def create_signature_stamp(data_assinatura: datetime, nome_aluno: str, cpf: str, ip: str, hash_auth: str) -> io.BytesIO:
-        """Cria o carimbo transparente para rodapé."""
+    def create_signature_stamp(data_assinatura: datetime, nome_aluno: str, cpf: str, email: str, ip: str, link: str, hash_auth: str) -> io.BytesIO:
+        """
+        Cria o carimbo com fundo branco para rodapé, contendo todos os dados solicitados.
+        """
         packet = io.BytesIO()
         can = canvas.Canvas(packet, pagesize=A4)
-        can.setFont("Helvetica", 8)
-        can.setFillColor(grey)
         
-        # Formatação dos dados para o rodapé
-        data_str = data_assinatura.strftime("%d/%m/%Y %H:%M:%S")
-        texto = f"Assinado eletronicamente por {nome_aluno.upper()} (CPF: {cpf}) em {data_str}"
-        texto_tecnico = f"IP: {ip} | Autenticação Hash: {hash_auth}"
+        # --- CONFIGURAÇÃO VISUAL ---
+        can.setFont("Helvetica", 7)
+        can.setFillColor(black)
         
-        # Centralizado no rodapé (A4 tem largura 595.27 pontos)
-        can.drawCentredString(297, 30, texto)
-        can.drawCentredString(297, 20, texto_tecnico)
+        # 1. Fundo Branco (Retângulo) para "Apagar" o rodapé original e garantir leitura
+        # x, y, width, height (Ajustado para o rodapé da página A4)
+        can.setFillColor(white)
+        can.rect(30, 10, 535, 95, fill=1, stroke=0) 
+        
+        # 2. Dados do Texto
+        can.setFillColor(black)
+        data_str = data_assinatura.strftime("%d/%m/%Y às %H:%M:%S (GMT-3)")
+        
+        # Barra de blocos (Unicode)
+        barra = "■" * 95 # Ajustado para a largura
+
+        # Lista de linhas para impressão
+        linhas = [
+            f"ACEITE DIGITAL REALIZADO",
+            f"Data/Hora: {data_str}",
+            f"Nome: {nome_aluno}",
+            f"CPF: {cpf}",
+            f"E-mail: {email}",
+            f"IP: {ip}",
+            f"Link: {link}",
+            f"Hash: {hash_auth}",
+            barra
+        ]
+
+        # 3. Desenho das linhas (Alinhado à Esquerda com margem, subindo de baixo para cima)
+        # Começamos na posição Y = 90 e descemos
+        x_pos = 45
+        y_pos = 90
+        line_height = 9
+
+        for linha in linhas:
+            can.drawString(x_pos, y_pos, linha)
+            y_pos -= line_height
+
         can.save()
         packet.seek(0)
         return packet
 
     @staticmethod
     def apply_stamp_to_pdf(pdf_original_bytes: io.BytesIO, stamp_bytes: io.BytesIO) -> io.BytesIO:
-        """Faz o merge do carimbo com todas as páginas do PDF."""
+        """
+        Faz o merge do carimbo com todas as páginas do PDF usando pypdf.
+        (LÓGICA PRESERVADA)
+        """
         try:
             pdf_original_bytes.seek(0)
             existing_pdf = PdfReader(pdf_original_bytes)
