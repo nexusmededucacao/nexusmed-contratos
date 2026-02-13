@@ -169,8 +169,7 @@ def main():
             st.info("Baixe o arquivo abaixo para conferir se está idêntico ao que o aluno acessará.")
             
             c1, c2 = st.columns(2)
-            
-            # Botão de Download direto da Nuvem (Integridade Garantida)
+                       
             if url_oficial:
                 c1.link_button("📥 Baixar PDF do Servidor", url_oficial, use_container_width=True)
             
