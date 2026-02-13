@@ -143,7 +143,7 @@ def main():
                 st.session_state[key_p] = max(0.0, v_final_p)
 
         lista_entrada = []
-        opcoes_pagamento = ["PIX", "Cartão de Crédito", "Boleto", "Transferência"]
+        opcoes_pagamento = ["PIX", "Cartão de Crédito", "Boleto"]
         
         if v_entrada_total > 0:
             for i in range(q_entrada):
@@ -159,8 +159,8 @@ def main():
                         on_change=recalcular_parcelas_entrada
                     )
                     
-                    d_p = c_e2.date_input(f"Vencimento P{i+1}", value=date.today() + relativedelta(days=i*30), key=f"dent_{i}")
-                    f_p = c_e3.selectbox(f"Forma P{i+1}", opcoes_pagamento, key=f"fent_{i}")
+                    d_p = c_e2.date_input(f"Vencimento E{i+1}", value=date.today() + relativedelta(days=i*30), key=f"dent_{i}")
+                    f_p = c_e3.selectbox(f"Forma de Pagamento{i+1}", opcoes_pagamento, key=f"fent_{i}")
                     
                     lista_entrada.append({"numero": i+1, "data": d_p.strftime("%d/%m/%Y"), "valor": format_currency(v_p), "forma": f_p, "valor_num": v_p})
 
@@ -176,8 +176,8 @@ def main():
             st.markdown(f"#### 2. Saldo Remanescente: {format_currency(saldo_restante)}")
             cs1, cs2, cs3 = st.columns(3)
             q_saldo = cs1.number_input("Qtd Parcelas Saldo", 1, 36, 12)
-            d_saldo_ini = cs2.date_input("1º Vencimento Saldo", value=date.today() + relativedelta(months=1))
-            f_saldo = cs3.selectbox("Forma Saldo", ["Boleto", "Cartão de Crédito", "PIX"])
+            d_saldo_ini = cs2.date_input("Vencimento Saldo - 1ª PARC", value=date.today() + relativedelta(months=1))
+            f_saldo = cs3.selectbox("Forma de Pagamento", ["PIX", "Boleto", "Cartão de Crédito"])
             
             v_base_saldo = round(saldo_restante / q_saldo, 2)
             soma_acumulada_saldo = 0
