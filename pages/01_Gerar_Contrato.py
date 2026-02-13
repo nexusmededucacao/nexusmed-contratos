@@ -13,6 +13,14 @@ from src.document_engine.pdf_converter import PDFManager
 from src.utils.storage import StorageService
 from src.utils.email_sender import enviar_email_contrato
 
+# ==============================================================================
+# ⚠️ CONFIGURAÇÃO DE URL (FIXA PARA PRODUÇÃO)
+# ==============================================================================
+# Como você quer apenas o link da nuvem, definimos ele diretamente aqui.
+# Assim, mesmo se você testar no seu computador, o link gerado será o oficial.
+BASE_URL = "https://nexusmed-contratos.streamlit.app" 
+# ==============================================================================
+
 def obter_mes_extenso(dt):
     meses = {
         1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
