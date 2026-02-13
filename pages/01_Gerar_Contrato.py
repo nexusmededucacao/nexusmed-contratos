@@ -251,7 +251,7 @@ def main():
 
                     # DO PRODUTO CONTRATADO
                     'pos_graduacao': get_safe(curso, 'nome'),
-                    'turma': get_safe(turma, 'codigo_turma'),
+                    'turma': get_safe(dados_turma, 'codigo_turma'),
                     'formato_curso': get_safe(turma, 'formato_curso', get_safe(turma, 'formato')),
                     'atendimento': get_safe(turma, 'atendimento', 'NÃO'),                    
                     'dia': agora.day, 'mês': obter_mes_extenso(agora), 'ano': agora.year,
