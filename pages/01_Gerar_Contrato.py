@@ -114,12 +114,27 @@ def main():
                     url_pdf_servidor, erro_upload = StorageService.upload_minuta(pdf_buffer, aluno['nome_completo'], curso['nome'])
                     if erro_upload: raise Exception(f"Erro no Upload: {erro_upload}")
 
-                    # 3. SALVAMENTO NO BANCO
+                    # 3. SALVAMENTO NO BANCO COM MAPEAMENTO COMPLETO
                     dados_db = {
-                        "aluno_id": aluno['id'], "turma_id": int(dados_turma['id']),
-                        "valor_final": valor_final, "token_acesso": token, "status": "Pendente",
-                        "caminho_arquivo": url_pdf_servidor,
-                        "entrada_valor": v_entrada_total, "saldo_valor": saldo_restante
+                        "aluno_id": aluno['id'],
+                        "turma_id": int(dados_turma['id']), # Cast para bigint
+                        "valor_curso": float(valor_bruto),
+                        "valor_desconto": float(valor_desconto),
+                        "percentual_desconto": float(percent_desc),
+                        "valor_final": float(valor_final),
+                        "valor_material": float(valor_material_calc),
+                        "bolsista": True if percent_desc > 0 else False,
+                        "atendimento_paciente": True if dados_turma.get('atendimento') == 'Sim' else False,
+                        "entrada_valor": float(v_entrada_total),
+                        "entrada_qtd_parcelas": int(q_entrada),
+                        "saldo_valor": float(saldo_restante),
+                        "saldo_qtd_parcelas": int(q_saldo),
+                        "token_acesso": token,
+                        "status": "Pendente",
+                        "caminho_arquivo": url_pdf_servidor, # URL do Bucket
+                        "formato_curso": dados_turma.get('formato', 'Digital'),
+                        "entrada_forma_pagamento": lista_entrada[0]['forma'] if lista_entrada else "N/A",
+                        "saldo_forma_pagamento": f_saldo if 'f_saldo' in locals() else "N/A"
                     }
                     
                     res = ContratoRepository.criar_contrato(dados_db)
