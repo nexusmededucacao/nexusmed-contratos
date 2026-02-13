@@ -241,7 +241,7 @@ def main():
                         # Financeiro (Correção Crítica: valor_curso)
                         'valor_curso': format_currency(valor_bruto).replace("R$", "").strip(),
                         'valor_bruto': format_currency(valor_bruto).replace("R$", "").strip(), # Backup
-                        'percentual_desconto': str(percentual_desconto).replace(".", ","),
+                        'percentual_desconto': str(percent_desconto).replace(".", ","),
                         'valor_desconto': format_currency(v_desconto).replace("R$", "").strip(),
                         'valor_final': format_currency(v_final).replace("R$", "").strip(),
                         'valor_material': format_currency(valor_material_calc).replace("R$", "").strip(),
