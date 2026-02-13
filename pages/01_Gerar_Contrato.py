@@ -227,8 +227,8 @@ def main():
                         'cidade': fmt(aluno.get('cidade')),
                         'uf': fmt(aluno.get('uf')), 
                         'cep': fmt(aluno.get('cep')),
-                        'crm': fmt(aluno.get('crm'), "___________"),
-                        'area_formacao': fmt(aluno.get('especialidade'), "Médica"),
+                        'crm': fmt(aluno.get('crm')),
+                        'area_formacao': fmt(aluno.get('area_formacao')),
                         
                         # Curso
                         'curso': fmt(curso.get('nome')),
