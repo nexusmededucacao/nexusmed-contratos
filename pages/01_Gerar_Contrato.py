@@ -13,6 +13,12 @@ from src.document_engine.pdf_converter import PDFManager
 from src.utils.storage import StorageService
 from src.utils.email_sender import enviar_email_contrato
 
+# ==============================================================================
+# ⚠️ CONFIGURAÇÃO DE URL (FIXA PARA PRODUÇÃO)
+# ==============================================================================
+BASE_URL = "https://nexusmed-contratos.streamlit.app" 
+# ==============================================================================
+
 # Proteção de Acesso
 if not st.session_state.get("authenticated"):
     st.error("Por favor, faça login para acessar esta página.")
@@ -241,10 +247,8 @@ def main():
                         'cep': get_safe(aluno, 'cep'),
                         'curso': get_safe(curso, 'nome'),
                         'pos_graduacao': get_safe(curso, 'nome'),
-                        
                         'codigo_turma': codigo_turma_valor,
                         'turma': codigo_turma_valor,
-                        
                         'formato_curso': get_safe(dados_turma, 'formato', 'EAD'),
                         'atendimento': get_safe(dados_turma, 'atendimento', 'Sim'), 
                         'valor_curso': format_money_word(valor_bruto),
@@ -267,33 +271,37 @@ def main():
                     st.session_state.pdf_buffer_cache = pdf_buffer
 
                     # --- UPLOAD ---
-                    # st.toast("⬆️ Fazendo upload...", icon="☁️") # Removido para limpar a tela
                     pdf_buffer.seek(0)
                     path_s, error_upload = StorageService.upload_minuta(pdf_buffer, aluno['nome_completo'], curso['nome'])
                     
                     if error_upload:
                          raise Exception(f"Erro no Upload do PDF: {error_upload}")
 
-                    # --- SALVAR NO BANCO (COM MAPEAMENTO CORRIGIDO PARA SUA TABELA) ---
-                    # st.toast("💾 Salvando dados...", icon="💽")
-                    
-                    # ⚠️ CRÍTICO: Ajustamos o dicionário para bater com as colunas que vi no seu print
+                    # --- SALVAR NO BANCO (MAPEAMENTO 1:1 COM SUA TABELA) ---
+                    # Criamos o dicionário EXATO com as colunas que você listou
                     dados_contrato_db = {
                         "aluno_id": aluno['id'],
-                        "turma_id": st.session_state.form_data['turma']['id'],
-                        "valor_curso": valor_final, # No print sua coluna é 'valor_curso', mas guardamos o final
+                        "turma_id": int(st.session_state.form_data['turma']['id']), # Cast para bigint
+                        "valor_curso": valor_bruto,
                         "valor_desconto": valor_desconto,
-                        # Adicione estas colunas no Supabase se não existirem, ou o código vai alertar
-                        "caminho_arquivo": path_s,
+                        "percentual_desconto": percent_desc,
+                        "valor_final": valor_final,
+                        "valor_material": valor_material_calc,
+                        "bolsista": True if percent_desc > 0 else False,
+                        "atendimento_paciente": True if dados_turma.get('atendimento') == 'Sim' else False,
+                        "entrada_valor": v_entrada_total,
+                        "entrada_qtd_parcelas": int(q_entrada),
+                        "saldo_valor": saldo_restante,
+                        "saldo_qtd_parcelas": int(q_saldo),
                         "token_acesso": token,
                         "status": "Pendente",
-                        # "entrada_valor": v_entrada_total,  <-- Se der erro, comente estas linhas ou crie as colunas
-                        # "saldo_valor": saldo_restante
+                        "caminho_arquivo": path_s,
+                        "formato_curso": dados_turma.get('formato', 'Digital')
+                        # Colunas opcionais que não temos no form agora ficam null (ex: formas de pagto)
                     }
                     
                     res = ContratoRepository.criar_contrato(dados_contrato_db)
                     
-                    # Verifica se o Supabase retornou erro
                     if res and isinstance(res, dict) and ('error' in res or 'message' in res):
                         raise Exception(f"Erro ao salvar no Banco: {res}")
 
@@ -302,9 +310,7 @@ def main():
                     st.rerun()
 
                 except Exception as e:
-                    # ISSO VAI MOSTRAR O ERRO NA TELA
                     st.error(f"❌ FALHA NO PROCESSO: {str(e)}")
-                    st.info("Verifique se as colunas 'caminho_arquivo', 'token_acesso' e 'status' existem na tabela 'contratos' do Supabase.")
 
     # --- PASSO 4: PAINEL DE AÇÃO ---
     elif st.session_state.step == 4:
@@ -314,8 +320,8 @@ def main():
         aluno = st.session_state.form_data['aluno']
         curso = st.session_state.form_data['curso']
         
-        # ⚠️ LINK CORRIGIDO PARA PRODUÇÃO
-        link_assinatura = f"https://nexusmed-contratos.streamlit.app/Assinatura?token={token}"
+        # ⚠️ LINK DE PRODUÇÃO
+        link_assinatura = f"{BASE_URL}/Assinatura?token={token}"
 
         with st.container(border=True):
             st.markdown("### 📢 Ações Disponíveis")
