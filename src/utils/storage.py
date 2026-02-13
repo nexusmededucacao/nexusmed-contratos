@@ -9,41 +9,42 @@ class StorageService:
     def sanitizar_nome(texto: str) -> str:
         """Remove acentos, espaços e caracteres especiais para nomes de arquivos."""
         if not texto: return "arquivo"
-        # Normaliza (ex: João -> Joao)
         nfkd = unicodedata.normalize('NFKD', texto)
         sem_acento = "".join([c for c in nfkd if not unicodedata.combining(c)])
-        # Remove tudo que não for letra ou número e troca espaço por _
         limpo = re.sub(r'[^a-zA-Z0-9]', '_', sem_acento)
-        # Remove underscores duplicados
         return re.sub(r'_{2,}', '_', limpo).strip('_')
 
     @staticmethod
     def upload_minuta(file_bytes: io.BytesIO, nome_aluno: str, nome_curso: str):
         """
-        Sobe o PDF para o bucket 'contratos' e retorna o caminho e nome.
-        Nome formato: Minuta_NomeAluno_NomeCurso.pdf
+        Sobe o PDF para o bucket 'contratos' e retorna a URL pública.
         """
         try:
-            # Prepara o nome do arquivo
+            # Prepara o nome do arquivo (Salvaremos na RAIZ do bucket)
             aluno_safe = StorageService.sanitizar_nome(nome_aluno)
             curso_safe = StorageService.sanitizar_nome(nome_curso)
             filename = f"Minuta_{aluno_safe}_{curso_safe}.pdf"
-            path = f"minutas/{filename}"
-
-            # Garante ponteiro no início
+            
+            # Garante ponteiro no início antes de ler
             file_bytes.seek(0)
+            data = file_bytes.read()
 
-            # Upload Supabase com tratamento de erro específico
+            # Upload Supabase
+            # Usamos o filename direto no path para salvar na raiz
             supabase.storage.from_("contratos").upload(
-                path=path,
-                file=file_bytes.getvalue(),
+                path=filename,
+                file=data,
                 file_options={"content-type": "application/pdf", "upsert": "true"}
             )
             
-            return path, filename
+            # Busca a URL pública imediatamente
+            url_publica = supabase.storage.from_("contratos").get_public_url(filename)
+            
+            return url_publica, None
+
         except Exception as e:
-            st.error(f"Erro ao fazer upload para o Storage: {e}")
-            return None, None
+            # Retorna o erro para ser tratado pela página 01_Gerar_Contrato.py
+            return None, str(e)
 
     @staticmethod
     def obter_url_publica(path: str) -> str:
