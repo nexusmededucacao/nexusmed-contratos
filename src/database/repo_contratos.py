@@ -10,10 +10,9 @@ class ContratoRepository:
     @staticmethod
     def listar_todos():
         """
-        Retorna todos os contratos com dados básicos do aluno e da turma.
+        Retorna todos os contratos com dados básicos.
         """
         try:
-            # Query compacta para evitar erros de parsing de string
             query = "id, status, valor_final, created_at, alunos(nome_completo, cpf), turmas(codigo_turma, cursos(nome))"
             
             response = supabase.table("contratos")\
@@ -27,9 +26,8 @@ class ContratoRepository:
 
     @staticmethod
     def buscar_por_id_detalhado(contrato_id: str):
-        """Busca todos os campos de um contrato para preenchimento do Word."""
+        """Busca todos os campos de um contrato."""
         try:
-            # Busca profunda: Contrato -> Aluno, Contrato -> Turma -> Curso
             query = "*, alunos(*), turmas(*, cursos(*))"
             response = supabase.table("contratos").select(query).eq("id", contrato_id).execute()
             return response.data[0] if response.data else None
@@ -39,7 +37,7 @@ class ContratoRepository:
 
     @staticmethod
     def buscar_por_token(token: str):
-        """Busca contrato pelo token de acesso (usado na página de assinatura)."""
+        """Busca contrato pelo token de acesso."""
         try:
             query = "*, alunos(*), turmas(*, cursos(*))"
             response = supabase.table("contratos").select(query).eq("token_acesso", token).execute()
@@ -51,19 +49,28 @@ class ContratoRepository:
     @staticmethod
     def criar_contrato(dados: dict):
         """
-        Insere um novo contrato e RETORNA OS DADOS CRIADOS (incluindo o ID).
+        Insere um novo contrato.
+        ALTERAÇÃO CRÍTICA: Se der erro, retorna um dicionário com a chave 'error'
+        para que o Streamlit possa exibir o motivo na tela.
         """
         try:
+            # Garante status padrão se não vier
             if "status" not in dados:
                 dados["status"] = "Pendente"
             
+            # Tenta inserir
             response = supabase.table("contratos").insert(dados).execute()
             
-            # Ajuste crítico: Retorna o dado limpo, não o objeto response
-            return response.data[0] if response.data else None
+            # Se inseriu com sucesso, retorna os dados da linha criada
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+            else:
+                return {"error": "O Supabase não retornou dados de confirmação."}
+
         except Exception as e:
-            print(f"Erro ao criar contrato: {e}")
-            return None
+            # AQUI ESTÁ A CORREÇÃO:
+            # Retornamos o erro como texto para aparecer na tela do usuário
+            return {"error": str(e)}
 
     @staticmethod
     def registrar_assinatura(contrato_id: str, payload_assinatura: dict):
@@ -72,7 +79,6 @@ class ContratoRepository:
         """
         try:
             payload_assinatura["status"] = "Assinado"
-            # Garante formato ISO para o Supabase (timestamptz)
             if "data_aceite" not in payload_assinatura:
                 payload_assinatura["data_aceite"] = datetime.now().isoformat()
             
