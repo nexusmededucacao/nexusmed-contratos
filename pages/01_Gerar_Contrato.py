@@ -13,13 +13,10 @@ from src.document_engine.pdf_converter import PDFManager
 from src.utils.storage import StorageService
 from src.utils.email_sender import enviar_email_contrato
 
-# ==============================================================================
-# ⚠️ CONFIGURAÇÃO DE URL (FIXA PARA PRODUÇÃO)
-# ==============================================================================
-# Como você quer apenas o link da nuvem, definimos ele diretamente aqui.
-# Assim, mesmo se você testar no seu computador, o link gerado será o oficial.
-BASE_URL = "https://nexusmed-contratos.streamlit.app" 
-# ==============================================================================
+# Proteção de Acesso
+if not st.session_state.get("authenticated"):
+    st.error("Por favor, faça login para acessar esta página.")
+    st.stop()
 
 def obter_mes_extenso(dt):
     meses = {
@@ -29,43 +26,30 @@ def obter_mes_extenso(dt):
     }
     return meses[dt.month]
 
-# Proteção de Acesso
-if not st.session_state.get("authenticated"):
-    st.error("Por favor, faça login para acessar esta página.")
-    st.stop()
-
 # --- CALLBACK PARA RECÁLCULO AUTOMÁTICO DA ENTRADA ---
 def recalcular_parcelas_entrada():
-    """
-    Recalcula as parcelas seguintes da entrada quando o usuário edita uma anterior.
-    """
     total = st.session_state.get('v_entrada_total_safe', 0.0)
     qtd = st.session_state.get('q_entrada_safe', 1)
-    
     soma_acumulada = 0.0
     
     for i in range(qtd):
         key = f"input_ent_{i}"
-        
-        # Recupera valor atual
-        val_atual = st.session_state.get(key, 0.0)
-        soma_acumulada += val_atual
-        
-        saldo_restante = total - soma_acumulada
-        parcelas_restantes = qtd - (i + 1)
-        
-        if parcelas_restantes > 0:
-            valor_prox = round(saldo_restante / parcelas_restantes, 2)
+        if key in st.session_state:
+            val_atual = st.session_state[key]
+            soma_acumulada += val_atual
+            saldo_restante = total - soma_acumulada
+            parcelas_restantes = qtd - (i + 1)
             
-            for j in range(i + 1, qtd):
-                key_prox = f"input_ent_{j}"
-                
-                if j == qtd - 1:
-                    val_prox_final = round(total - (soma_acumulada + (valor_prox * (parcelas_restantes - 1))), 2)
-                    st.session_state[key_prox] = max(0.0, val_prox_final)
-                else:
-                    st.session_state[key_prox] = max(0.0, valor_prox)
-            break
+            if parcelas_restantes > 0:
+                valor_prox = round(saldo_restante / parcelas_restantes, 2)
+                for j in range(i + 1, qtd):
+                    key_prox = f"input_ent_{j}"
+                    if j == qtd - 1:
+                        val_prox_final = round(total - (soma_acumulada + (valor_prox * (parcelas_restantes - 1))), 2)
+                        st.session_state[key_prox] = max(0.0, val_prox_final)
+                    else:
+                        st.session_state[key_prox] = max(0.0, valor_prox)
+                break
 
 def main():
     st.title("📄 Gerador de Contratos")
@@ -104,7 +88,6 @@ def main():
             curso_dados = map_cursos[sel_curso]
             turmas = curso_dados.get('turmas', [])
             if turmas:
-                # O dicionário 't' contém todos os dados da linha da tabela 'turmas'
                 map_turmas = {f"{t['codigo_turma']} ({t.get('formato','-')})": t for t in turmas}
                 sel_turma = st.selectbox("Selecione a Turma", list(map_turmas.keys()))
                 if st.button("Avançar"):
@@ -142,22 +125,17 @@ def main():
         # 1. ENTRADA
         st.markdown("#### 1. Pagamento de Entrada / À Vista")
         ce1, ce2 = st.columns(2)
-        
         v_entrada_total = ce1.number_input("Valor Total da Entrada", 0.0, valor_final, 0.0, step=100.0, key="v_entrada_total_safe")
         q_entrada = ce2.selectbox("Qtd. Parcelas Entrada", [1, 2, 3], key="q_entrada_safe")
         
         if "last_v_entrada" not in st.session_state or st.session_state.last_v_entrada != v_entrada_total or st.session_state.last_q_entrada != q_entrada:
             st.session_state.last_v_entrada = v_entrada_total
             st.session_state.last_q_entrada = q_entrada
-            
             v_base = round(v_entrada_total / q_entrada, 2) if q_entrada > 0 else 0
             for k in range(q_entrada):
                 key_p = f"input_ent_{k}"
-                if k == q_entrada - 1:
-                    v_final_p = round(v_entrada_total - (v_base * (q_entrada - 1)), 2)
-                    st.session_state[key_p] = max(0.0, v_final_p)
-                else:
-                    st.session_state[key_p] = v_base
+                v_final_p = round(v_entrada_total - (v_base * (q_entrada - 1)), 2) if k == q_entrada - 1 else v_base
+                st.session_state[key_p] = max(0.0, v_final_p)
 
         lista_entrada = []
         opcoes_pagamento = ["PIX", "Cartão de Crédito", "Boleto", "Transferência"]
@@ -168,28 +146,17 @@ def main():
                     c_e1, c_e2, c_e3 = st.columns(3)
                     key_val = f"input_ent_{i}"
                     
-                    # Sanitização de estado
                     if key_val in st.session_state:
                          if st.session_state[key_val] > valor_final:
                              st.session_state[key_val] = valor_final
 
-                    v_p = c_e1.number_input(
-                        f"Valor P{i+1}", 
-                        min_value=0.0, 
-                        max_value=float(valor_final), 
-                        step=0.01,
-                        key=key_val,
-                        on_change=recalcular_parcelas_entrada
-                    )
-                    
-                    d_p = c_e2.date_input(f"Vencimento P{i+1}", value=date.today() + relativedelta(days=i*30), key=f"dent_{i}")
+                    v_p = c_e1.number_input(f"Valor P{i+1}", 0.0, float(valor_final), step=0.01, key=key_val, on_change=recalcular_parcelas_entrada)
+                    d_p = c_e2.date_input(f"Vencimento P{i+1}", date.today() + relativedelta(days=i*30), key=f"dent_{i}")
                     f_p = c_e3.selectbox(f"Forma P{i+1}", opcoes_pagamento, key=f"fent_{i}")
-                    
                     lista_entrada.append({"numero": i+1, "data": d_p.strftime("%d/%m/%Y"), "valor": format_currency(v_p), "forma": f_p, "valor_num": v_p})
 
-            soma_entrada = sum(p['valor_num'] for p in lista_entrada)
-            if round(soma_entrada, 2) != round(v_entrada_total, 2):
-                st.warning(f"⚠️ Atenção: A soma das parcelas ({format_currency(soma_entrada)}) difere do total da entrada.")
+            if round(sum(p['valor_num'] for p in lista_entrada), 2) != round(v_entrada_total, 2):
+                st.warning(f"⚠️ Atenção: Soma da entrada difere do total.")
 
         # 2. SALDO
         saldo_restante = round(valor_final - v_entrada_total, 2)
@@ -209,10 +176,7 @@ def main():
                 v_parc = round(saldo_restante - soma_acumulada_saldo, 2) if i == q_saldo - 1 else v_base_saldo
                 soma_acumulada_saldo += v_parc
                 venc_p = d_saldo_ini + relativedelta(months=i)
-                lista_saldo.append({
-                    "Parcela": f"{i+1}/{q_saldo}", "Vencimento": venc_p.strftime("%d/%m/%Y"),
-                    "Valor": format_currency(v_parc), "Forma": f_saldo, "valor_num": v_parc
-                })
+                lista_saldo.append({"Parcela": f"{i+1}/{q_saldo}", "Vencimento": venc_p.strftime("%d/%m/%Y"), "Valor": format_currency(v_parc), "Forma": f_saldo, "valor_num": v_parc})
             
             with st.expander("📊 Ver Tabela Detalhada de Vencimentos"):
                 st.dataframe(lista_saldo, column_order=["Parcela", "Vencimento", "Valor", "Forma"], hide_index=True, use_container_width=True)
@@ -223,7 +187,7 @@ def main():
         total_ok = abs(round(soma_total, 2) - valor_final) <= 0.05
         
         st.divider()
-        if not entrada_ok: st.error("❌ Erro na Entrada: Soma das parcelas não bate com o total definido.")
+        if not entrada_ok: st.error("❌ Erro na Entrada: Soma incorreta.")
         elif not total_ok: st.error(f"❌ Erro Global: Soma total ({format_currency(soma_total)}) difere do contrato.")
         
         c_b1, c_b2 = st.columns([1, 4])
@@ -231,105 +195,116 @@ def main():
         
         if c_b2.button("🚀 Gerar Contrato", type="primary", disabled=not (entrada_ok and total_ok), use_container_width=True):
             with st.spinner("Gerando Documentos..."):
-                token = str(uuid.uuid4())
-                agora = datetime.now()
-                
-                # --- FUNÇÕES AUXILIARES ---
-                def get_safe(source, key, default=""):
-                    val = source.get(key)
-                    return str(val) if val is not None else default
-
-                def format_money_word(valor):
-                    return format_currency(valor).replace("R$", "").strip()
-
-                d_nasc = aluno.get('data_nascimento', '')
                 try:
-                    if isinstance(d_nasc, str) and d_nasc: 
-                        d_nasc_fmt = datetime.strptime(d_nasc, "%Y-%m-%d").strftime("%d/%m/%Y")
-                    elif isinstance(d_nasc, (date, datetime)): 
-                        d_nasc_fmt = d_nasc.strftime("%d/%m/%Y")
-                    else: d_nasc_fmt = ""
-                except: d_nasc_fmt = str(d_nasc)
-
-                # --- DADOS DA TURMA ---
-                dados_turma = st.session_state.form_data['turma']
-                
-                # Extraímos o código da turma para uma variável para reusar
-                codigo_turma_valor = get_safe(dados_turma, 'codigo_turma')
-
-                # --- CONTEXTO WORD (DUPLA VERIFICAÇÃO DE TAGS) ---
-                ctx_doc = {
-                    # 1. ALUNO
-                    'nome': get_safe(aluno, 'nome_completo').upper(),
-                    'cpf': format_cpf(get_safe(aluno, 'cpf')),
-                    'rg': get_safe(aluno, 'rg'),
-                    'orgao_emissor': get_safe(aluno, 'orgao_emissor'),
-                    'nacionalidade': get_safe(aluno, 'nacionalidade', 'Brasileira'),
-                    'estado_civil': get_safe(aluno, 'estado_civil', 'Solteiro(a)'),
-                    'data_nascimento': d_nasc_fmt,
-                    'email': get_safe(aluno, 'email'),
-                    'telefone': get_safe(aluno, 'telefone'),
-                    'celular': get_safe(aluno, 'telefone'),
-                    'crm': get_safe(aluno, 'crm'),
-                    'area_formacao': get_safe(aluno, 'area_formacao', get_safe(aluno, 'especialidade', '')),
+                    token = str(uuid.uuid4())
+                    agora = datetime.now()
                     
-                    'logradouro': get_safe(aluno, 'logradouro'),
-                    'numero': get_safe(aluno, 'numero'),
-                    'complemento': get_safe(aluno, 'complemento'),
-                    'bairro': get_safe(aluno, 'bairro'),
-                    'cidade': get_safe(aluno, 'cidade'),
-                    'uf': get_safe(aluno, 'uf'),
-                    'cep': get_safe(aluno, 'cep'),
+                    # --- FUNÇÕES DE APOIO ---
+                    def get_safe(source, key, default=""):
+                        val = source.get(key)
+                        return str(val) if val is not None else default
 
-                    # 2. PRODUTO (REDUNDÂNCIA PARA GARANTIR PREENCHIMENTO)
-                    'curso': get_safe(curso, 'nome'),
-                    'pos_graduacao': get_safe(curso, 'nome'),
+                    def format_money_word(valor):
+                        return format_currency(valor).replace("R$", "").strip()
+
+                    d_nasc = aluno.get('data_nascimento', '')
+                    try:
+                        if isinstance(d_nasc, str) and d_nasc: d_nasc_fmt = datetime.strptime(d_nasc, "%Y-%m-%d").strftime("%d/%m/%Y")
+                        elif isinstance(d_nasc, (date, datetime)): d_nasc_fmt = d_nasc.strftime("%d/%m/%Y")
+                        else: d_nasc_fmt = ""
+                    except: d_nasc_fmt = str(d_nasc)
+
+                    # --- DADOS DA TURMA ---
+                    dados_turma = st.session_state.form_data['turma']
+                    codigo_turma_valor = get_safe(dados_turma, 'codigo_turma')
+
+                    # --- CONTEXTO WORD ---
+                    ctx_doc = {
+                        'nome': get_safe(aluno, 'nome_completo').upper(),
+                        'cpf': format_cpf(get_safe(aluno, 'cpf')),
+                        'rg': get_safe(aluno, 'rg'),
+                        'orgao_emissor': get_safe(aluno, 'orgao_emissor'),
+                        'nacionalidade': get_safe(aluno, 'nacionalidade', 'Brasileira'),
+                        'estado_civil': get_safe(aluno, 'estado_civil', 'Solteiro(a)'),
+                        'data_nascimento': d_nasc_fmt,
+                        'email': get_safe(aluno, 'email'),
+                        'telefone': get_safe(aluno, 'telefone'),
+                        'celular': get_safe(aluno, 'telefone'),
+                        'crm': get_safe(aluno, 'crm'),
+                        'area_formacao': get_safe(aluno, 'area_formacao', get_safe(aluno, 'especialidade', '')),
+                        'logradouro': get_safe(aluno, 'logradouro'),
+                        'numero': get_safe(aluno, 'numero'),
+                        'complemento': get_safe(aluno, 'complemento'),
+                        'bairro': get_safe(aluno, 'bairro'),
+                        'cidade': get_safe(aluno, 'cidade'),
+                        'uf': get_safe(aluno, 'uf'),
+                        'cep': get_safe(aluno, 'cep'),
+                        'curso': get_safe(curso, 'nome'),
+                        'pos_graduacao': get_safe(curso, 'nome'),
+                        
+                        'codigo_turma': codigo_turma_valor,
+                        'turma': codigo_turma_valor,
+                        
+                        'formato_curso': get_safe(dados_turma, 'formato', 'EAD'),
+                        'atendimento': get_safe(dados_turma, 'atendimento', 'Sim'), 
+                        'valor_curso': format_money_word(valor_bruto),
+                        'valor_desconto': format_money_word(valor_desconto),
+                        'pencentual_desconto': f"{percent_desc}", 
+                        'valor_final': format_money_word(valor_final),
+                        'valor_material': format_money_word(valor_material_calc),
+                        'bolsista': "SIM" if percent_desc > 0 else "NÃO",
+                        'dia': agora.day, 'mês': obter_mes_extenso(agora), 'ano': agora.year,
+                        'data_atual': format_date_br(agora)
+                    }
+
+                    tab_ent = [{"n": p["numero"], "vencimento": p["data"], "valor": p["valor"], "forma": p["forma"]} for p in lista_entrada]
+                    tab_sal = [{"n": p["Parcela"], "vencimento": p["Vencimento"], "valor": p["Valor"], "forma": p["Forma"]} for p in lista_saldo]
                     
-                    # Envia para a chave 'codigo_turma' (se o Word usar {{codigo_turma}})
-                    'codigo_turma': codigo_turma_valor,
-                    # Envia TAMBÉM para a chave 'turma' (se o Word usar {{turma}})
-                    'turma': codigo_turma_valor,
+                    processor = ContractProcessor("assets/modelo_contrato_V2.docx")
+                    docx_buffer = processor.generate_docx(ctx_doc, tab_ent, tab_sal)
+                    pdf_buffer = PDFManager.convert_docx_to_pdf(docx_buffer)
                     
-                    'formato_curso': get_safe(dados_turma, 'formato', 'EAD'),
-                    'atendimento': get_safe(dados_turma, 'atendimento', 'Sim'), 
+                    st.session_state.pdf_buffer_cache = pdf_buffer
 
-                    # 3. FINANCEIRO
-                    'valor_curso': format_money_word(valor_bruto),
-                    'valor_desconto': format_money_word(valor_desconto),
-                    'pencentual_desconto': f"{percent_desc}", 
-                    'valor_final': format_money_word(valor_final),
-                    'valor_material': format_money_word(valor_material_calc),
-                    'bolsista': "SIM" if percent_desc > 0 else "NÃO",
+                    # --- UPLOAD ---
+                    # st.toast("⬆️ Fazendo upload...", icon="☁️") # Removido para limpar a tela
+                    pdf_buffer.seek(0)
+                    path_s, error_upload = StorageService.upload_minuta(pdf_buffer, aluno['nome_completo'], curso['nome'])
                     
-                    # 4. DATAS
-                    'dia': agora.day, 
-                    'mês': obter_mes_extenso(agora), 
-                    'ano': agora.year,
-                    'data_atual': format_date_br(agora)
-                }
+                    if error_upload:
+                         raise Exception(f"Erro no Upload do PDF: {error_upload}")
 
-                tab_ent = [{"n": p["numero"], "vencimento": p["data"], "valor": p["valor"], "forma": p["forma"]} for p in lista_entrada]
-                tab_sal = [{"n": p["Parcela"], "vencimento": p["Vencimento"], "valor": p["Valor"], "forma": p["Forma"]} for p in lista_saldo]
-                
-                processor = ContractProcessor("assets/modelo_contrato_V2.docx")
-                docx_buffer = processor.generate_docx(ctx_doc, tab_ent, tab_sal)
-                pdf_buffer = PDFManager.convert_docx_to_pdf(docx_buffer)
-                
-                st.session_state.pdf_buffer_cache = pdf_buffer
+                    # --- SALVAR NO BANCO (COM MAPEAMENTO CORRIGIDO PARA SUA TABELA) ---
+                    # st.toast("💾 Salvando dados...", icon="💽")
+                    
+                    # ⚠️ CRÍTICO: Ajustamos o dicionário para bater com as colunas que vi no seu print
+                    dados_contrato_db = {
+                        "aluno_id": aluno['id'],
+                        "turma_id": st.session_state.form_data['turma']['id'],
+                        "valor_curso": valor_final, # No print sua coluna é 'valor_curso', mas guardamos o final
+                        "valor_desconto": valor_desconto,
+                        # Adicione estas colunas no Supabase se não existirem, ou o código vai alertar
+                        "caminho_arquivo": path_s,
+                        "token_acesso": token,
+                        "status": "Pendente",
+                        # "entrada_valor": v_entrada_total,  <-- Se der erro, comente estas linhas ou crie as colunas
+                        # "saldo_valor": saldo_restante
+                    }
+                    
+                    res = ContratoRepository.criar_contrato(dados_contrato_db)
+                    
+                    # Verifica se o Supabase retornou erro
+                    if res and isinstance(res, dict) and ('error' in res or 'message' in res):
+                        raise Exception(f"Erro ao salvar no Banco: {res}")
 
-                path_s, _ = StorageService.upload_minuta(pdf_buffer, aluno['nome_completo'], curso['nome'])
-                
-                ContratoRepository.criar_contrato({
-                    "aluno_id": aluno['id'], 
-                    "turma_id": st.session_state.form_data['turma']['id'],
-                    "valor_final": valor_final, "token_acesso": token, "status": "Pendente",
-                    "caminho_arquivo": path_s, "valor_desconto": valor_desconto, "valor_material": valor_material_calc,
-                    "entrada_valor": v_entrada_total, "saldo_valor": saldo_restante, "saldo_qtd_parcelas": q_saldo
-                })
-                
-                st.session_state.ultimo_token = token
-                st.session_state.step = 4
-                st.rerun()
+                    st.session_state.ultimo_token = token
+                    st.session_state.step = 4
+                    st.rerun()
+
+                except Exception as e:
+                    # ISSO VAI MOSTRAR O ERRO NA TELA
+                    st.error(f"❌ FALHA NO PROCESSO: {str(e)}")
+                    st.info("Verifique se as colunas 'caminho_arquivo', 'token_acesso' e 'status' existem na tabela 'contratos' do Supabase.")
 
     # --- PASSO 4: PAINEL DE AÇÃO ---
     elif st.session_state.step == 4:
@@ -339,7 +314,8 @@ def main():
         aluno = st.session_state.form_data['aluno']
         curso = st.session_state.form_data['curso']
         
-        link_assinatura = f"http://localhost:8501/Assinatura?token={token}"
+        # ⚠️ LINK CORRIGIDO PARA PRODUÇÃO
+        link_assinatura = f"https://nexusmed-contratos.streamlit.app/Assinatura?token={token}"
 
         with st.container(border=True):
             st.markdown("### 📢 Ações Disponíveis")
@@ -348,30 +324,19 @@ def main():
             c1, c2 = st.columns(2)
             
             if st.session_state.pdf_buffer_cache:
-                c1.download_button(
-                    label="📥 Baixar PDF do Contrato",
-                    data=st.session_state.pdf_buffer_cache,
-                    file_name=f"Contrato_{aluno['nome_completo']}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
+                c1.download_button("📥 Baixar PDF", st.session_state.pdf_buffer_cache, f"Contrato_{aluno['nome_completo']}.pdf", "application/pdf", use_container_width=True)
             
             if c2.button("📧 Enviar por E-mail", type="primary", use_container_width=True):
                 with st.spinner("Enviando e-mail..."):
                     try:
-                        enviar_email_contrato(
-                            destinatario_email=aluno['email'],
-                            destinatario_nome=aluno['nome_completo'],
-                            link_assinatura=link_assinatura,
-                            nome_curso=curso['nome']
-                        )
-                        st.toast("E-mail enviado com sucesso!", icon="✅")
+                        enviar_email_contrato(aluno['email'], aluno['nome_completo'], link_assinatura, curso['nome'])
+                        st.toast("E-mail enviado!", icon="✅")
                         st.success(f"Convite enviado para: {aluno['email']}")
                     except Exception as e:
                         st.error(f"Falha no envio: {e}")
 
             st.divider()
-            st.markdown("**🔗 Link para WhatsApp:**")
+            st.markdown("**🔗 Link para Assinatura:**")
             st.code(link_assinatura, language="text")
 
         if st.button("⬅️ Iniciar Novo Contrato"):
