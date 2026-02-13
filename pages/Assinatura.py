@@ -93,7 +93,7 @@ def main():
     nome_input = c1.text_input("Nome Completo")
     cpf_input = c2.text_input("CPF (Apenas números)")
     
-    termos = st.checkbox("Declaro que BAIXEI, LI e CONCORDO com todos os termos do contrato acima.")
+    termos = st.checkbox("Declaro que LI e CONCORDO com todos os termos do contrato acima.")
 
     if st.button("✍️ ASSINAR DIGITALMENTE", type="primary", use_container_width=True):
         input_cpf_limpo = limpar_cpf(cpf_input)
