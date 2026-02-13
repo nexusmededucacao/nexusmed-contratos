@@ -229,16 +229,17 @@ def main():
 
                 # Contexto Word (Preenchendo campos vazios)
                 ctx_doc = {
+
+                    # QUALIFICAÇÃO DO CONTRATANTE
                     'nome': get_safe(aluno, 'nome_completo').upper(),
                     'cpf': format_cpf(get_safe(aluno, 'cpf')),
-                    'rg': get_safe(aluno, 'rg'),
-                    'orgao_emissor': get_safe(aluno, 'orgao_emissor'),
-                    'nacionalidade': get_safe(aluno, 'nacionalidade', 'Brasileira'),
-                    'estado_civil': get_safe(aluno, 'estado_civil', 'Solteiro(a)'),
-                    'data_nascimento': d_nasc_fmt,
+                    'estado_civil': get_safe(aluno, 'estado_civil'),
                     'email': get_safe(aluno, 'email'),
-                    'telefone': get_safe(aluno, 'telefone'),
+                    'area_formacao': get_safe(aluno, 'area_formacao'),
+                    'data_nascimento': d_nasc_fmt,
+                    'nacionalidade': get_safe(aluno, 'nacionalidade'),
                     'crm': get_safe(aluno, 'crm'),
+                    'telefone': get_safe(aluno, 'telefone'),
                     
                     'logradouro': get_safe(aluno, 'logradouro'),
                     'numero': get_safe(aluno, 'numero'),
@@ -248,19 +249,11 @@ def main():
                     'uf': get_safe(aluno, 'uf'),
                     'cep': get_safe(aluno, 'cep'),
 
-                    'curso': curso['nome'],
-                    'pos_graduacao': curso['nome'],
-                    'turma': st.session_state.form_data['turma']['codigo_turma'],
-                    'formato': st.session_state.form_data['turma'].get('formato', 'EAD'),
-                    
-                    # Correção: Envia apenas o número para evitar R$ R$ no Word
-                    'valor_curso': format_money_word(valor_bruto),
-                    'valor_desconto': format_money_word(valor_desconto),
-                    'pencentual_desconto': f"{percent_desc}", # Sem o %
-                    'valor_final': format_money_word(valor_final),
-                    'valor_material': format_money_word(valor_material_calc),
-                    'bolsista': "SIM" if percent_desc > 0 else "NÃO",
-                    
+                    # DO PRODUTO CONTRATADO
+                    'pos_graduacao': get_safe(curso, 'nome'),
+                    'turma': get_safe(turma, 'codigo_turma'),
+                    'formato_curso': get_safe(turma, 'formato_curso', get_safe(turma, 'formato')),
+                    'atendimento': get_safe(turma, 'atendimento', 'NÃO'),                    
                     'dia': agora.day, 'mês': obter_mes_extenso(agora), 'ano': agora.year,
                     'data_atual': format_date_br(agora)
                 }
