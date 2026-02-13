@@ -1,13 +1,11 @@
 import io
 import unicodedata
 import re
-import streamlit as st
 from src.database.connection import supabase
 
 class StorageService:
     @staticmethod
     def sanitizar_nome(texto: str) -> str:
-        """Remove acentos, espaços e caracteres especiais para nomes de arquivos."""
         if not texto: return "arquivo"
         nfkd = unicodedata.normalize('NFKD', texto)
         sem_acento = "".join([c for c in nfkd if not unicodedata.combining(c)])
@@ -15,43 +13,33 @@ class StorageService:
         return re.sub(r'_{2,}', '_', limpo).strip('_')
 
     @staticmethod
-    def upload_minuta(file_bytes: io.BytesIO, nome_aluno: str, nome_curso: str):
-        """
-        Sobe o PDF para o bucket 'contratos' e retorna a URL pública.
-        """
+    def upload_minuta(pdf_buffer, nome_aluno, nome_curso):
         try:
-            # Prepara o nome do arquivo (Salvaremos na RAIZ do bucket)
             aluno_safe = StorageService.sanitizar_nome(nome_aluno)
             curso_safe = StorageService.sanitizar_nome(nome_curso)
-            filename = f"Minuta_{aluno_safe}_{curso_safe}.pdf"
+            # Adicionamos um timestamp ou ID único no nome para EVITAR CACHE
+            import time
+            timestamp = int(time.time())
+            filename = f"Minuta_{aluno_safe}_{curso_safe}_{timestamp}.pdf"
             
-            # Garante ponteiro no início antes de ler
-            file_bytes.seek(0)
-            data = file_bytes.read()
+            # Resetamos o buffer para garantir que lemos do início
+            pdf_buffer.seek(0)
+            conteudo_pdf = pdf_buffer.getvalue() # Pegamos o valor binário real
 
-            # Upload Supabase
-            # Usamos o filename direto no path para salvar na raiz
-            supabase.storage.from_("contratos").upload(
+            # Upload para a raiz do bucket 'contratos'
+            res = supabase.storage.from_("contratos").upload(
                 path=filename,
-                file=data,
+                file=conteudo_pdf,
                 file_options={"content-type": "application/pdf", "upsert": "true"}
             )
             
-            # Busca a URL pública imediatamente
-            url_publica = supabase.storage.from_("contratos").get_public_url(filename)
+            # Pegamos a URL pública gerada para este novo arquivo
+            url_res = supabase.storage.from_("contratos").get_public_url(filename)
             
-            return url_publica, None
+            # No Supabase Python, o get_public_url pode retornar uma string direta ou um objeto
+            url_final = url_res if isinstance(url_res, str) else url_res.get('publicURL', url_res)
+            
+            return url_final, None
 
         except Exception as e:
-            # Retorna o erro para ser tratado pela página 01_Gerar_Contrato.py
             return None, str(e)
-
-    @staticmethod
-    def obter_url_publica(path: str) -> str:
-        """Gera a URL pública para acesso ao documento."""
-        try:
-            res = supabase.storage.from_("contratos").get_public_url(path)
-            return res
-        except Exception as e:
-            print(f"Erro ao obter URL: {e}")
-            return None
