@@ -152,7 +152,7 @@ def main():
                     key_val = f"input_ent_{i}"
                     
                     v_p = c_e1.number_input(
-                        f"Valor P{i+1}", 
+                        f"Valor E{i+1}", 
                         min_value=0.0, 
                         max_value=valor_final,
                         key=key_val,
