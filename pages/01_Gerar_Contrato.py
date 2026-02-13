@@ -28,42 +28,46 @@ if not st.session_state.get("authenticated"):
 
 # --- CALLBACK PARA RECÁLCULO AUTOMÁTICO DA ENTRADA ---
 def recalcular_parcelas_entrada():
-    """Recalcula as parcelas seguintes da entrada quando o usuário edita uma anterior."""
+    """
+    Recalcula as parcelas seguintes da entrada quando o usuário edita uma anterior.
+    """
+    # Usamos session_state para pegar os valores mais recentes
     total = st.session_state.get('v_entrada_total_safe', 0.0)
     qtd = st.session_state.get('q_entrada_safe', 1)
     
     soma_acumulada = 0.0
     
-    # Itera para calcular o saldo e redistribuir
     for i in range(qtd):
         key = f"input_ent_{i}"
         
-        # Pega o valor atual do widget (se existir)
-        val_atual = st.session_state.get(key, 0.0)
-        soma_acumulada += val_atual
-        
-        saldo_restante = total - soma_acumulada
-        parcelas_restantes = qtd - (i + 1)
-        
-        # Se ainda temos parcelas pela frente, distribuímos o saldo
-        if parcelas_restantes > 0:
-            valor_prox = round(saldo_restante / parcelas_restantes, 2)
+        # Se a chave existe (o widget já foi criado/editado)
+        if key in st.session_state:
+            val_atual = st.session_state[key]
+            soma_acumulada += val_atual
             
-            # Atualiza as próximas chaves no session_state
-            for j in range(i + 1, qtd):
-                key_prox = f"input_ent_{j}"
+            # Quanto falta para completar a entrada?
+            saldo_restante = total - soma_acumulada
+            parcelas_restantes = qtd - (i + 1)
+            
+            # Se ainda tem parcelas para frente, distribui o saldo
+            if parcelas_restantes > 0:
+                # Divide o que sobrou igualmente
+                valor_prox = round(saldo_restante / parcelas_restantes, 2)
                 
-                # Ajuste fino para a última parcela pegar os centavos ou fechar a conta
-                if j == qtd - 1:
-                    # Recalcula o que falta para fechar o total exato
-                    # (Total - (soma até agora + parcelas intermediárias))
-                    val_prox_final = round(total - (soma_acumulada + (valor_prox * (parcelas_restantes - 1))), 2)
-                    st.session_state[key_prox] = max(0.0, val_prox_final)
-                else:
-                    st.session_state[key_prox] = max(0.0, valor_prox)
-            
-            # Como já redefinimos o futuro, paramos este loop de recálculo
-            break
+                # Aplica nos inputs seguintes
+                for j in range(i + 1, qtd):
+                    key_prox = f"input_ent_{j}"
+                    
+                    # A última parcela pega a diferença exata (ajuste de centavos)
+                    if j == qtd - 1:
+                        # (Total - (tudo que já foi somado + parcelas intermediárias))
+                        val_prox_final = round(total - (soma_acumulada + (valor_prox * (parcelas_restantes - 1))), 2)
+                        st.session_state[key_prox] = max(0.0, val_prox_final)
+                    else:
+                        st.session_state[key_prox] = max(0.0, valor_prox)
+                
+                # Interrompe o loop pois já recalculamos o futuro com base na edição atual
+                break
 
 def main():
     st.title("📄 Gerador de Contratos")
@@ -136,19 +140,18 @@ def main():
         st.success(f"### Valor Final do Contrato: {format_currency(valor_final)}")
         st.divider()
 
-        # 1. ENTRADA (LÓGICA BLINDADA)
+        # 1. ENTRADA (CORREÇÃO DO TRAVAMENTO)
         st.markdown("#### 1. Pagamento de Entrada / À Vista")
         ce1, ce2 = st.columns(2)
         
         v_entrada_total = ce1.number_input("Valor Total da Entrada", 0.0, valor_final, 0.0, step=100.0, key="v_entrada_total_safe")
         q_entrada = ce2.selectbox("Qtd. Parcelas Entrada", [1, 2, 3], key="q_entrada_safe")
         
-        # INICIALIZAÇÃO SEGURA: Se mudou o total ou a quantidade, reseta a distribuição
+        # Inicializa valores da entrada (reset inteligente)
         if "last_v_entrada" not in st.session_state or st.session_state.last_v_entrada != v_entrada_total or st.session_state.last_q_entrada != q_entrada:
             st.session_state.last_v_entrada = v_entrada_total
             st.session_state.last_q_entrada = q_entrada
             
-            # Distribuição igualitária inicial
             v_base = round(v_entrada_total / q_entrada, 2) if q_entrada > 0 else 0
             for k in range(q_entrada):
                 key_p = f"input_ent_{k}"
@@ -168,20 +171,20 @@ def main():
                     c_e1, c_e2, c_e3 = st.columns(3)
                     key_val = f"input_ent_{i}"
                     
-                    # --- SANITIZAÇÃO DE ESTADO PARA EVITAR ERRO ---
-                    # Antes de criar o widget, verificamos se o valor no state é seguro.
-                    # Se for maior que o total permitido (v_entrada_total), cortamos.
-                    # Isso impede que um valor antigo "quebre" o max_value.
+                    # --- CORREÇÃO DO CRASH ---
+                    # Antes de criar o widget, garantimos que o valor no session_state não ultrapasse o contrato.
+                    # Mas no widget, usamos max_value = valor_final (bem alto) para não travar a UI durante a digitação.
                     if key_val in st.session_state:
-                         if st.session_state[key_val] > v_entrada_total:
-                             st.session_state[key_val] = v_entrada_total
+                         if st.session_state[key_val] > valor_final:
+                             st.session_state[key_val] = valor_final
 
                     v_p = c_e1.number_input(
                         f"Valor P{i+1}", 
                         min_value=0.0, 
-                        max_value=v_entrada_total, # Limite físico é o total da entrada
+                        max_value=float(valor_final), # EVITA O CRASH: O limite é o contrato todo
+                        step=0.01,
                         key=key_val,
-                        on_change=recalcular_parcelas_entrada # Chama recálculo ao editar
+                        on_change=recalcular_parcelas_entrada
                     )
                     
                     d_p = c_e2.date_input(f"Vencimento P{i+1}", value=date.today() + relativedelta(days=i*30), key=f"dent_{i}")
@@ -192,7 +195,7 @@ def main():
             # Validação visual de soma
             soma_entrada = sum(p['valor_num'] for p in lista_entrada)
             if round(soma_entrada, 2) != round(v_entrada_total, 2):
-                st.warning(f"⚠️ A soma das parcelas ({format_currency(soma_entrada)}) difere do total da entrada.")
+                st.warning(f"⚠️ Atenção: A soma das parcelas ({format_currency(soma_entrada)}) difere do total da entrada.")
 
         # 2. SALDO
         saldo_restante = round(valor_final - v_entrada_total, 2)
@@ -255,10 +258,10 @@ def main():
                     else: d_nasc_fmt = ""
                 except: d_nasc_fmt = str(d_nasc)
 
-                # DEFINIÇÃO DE VARIÁVEIS CRÍTICAS
+                # --- DEFINIÇÃO OBRIGATÓRIA DA TURMA ---
                 dados_turma = st.session_state.form_data['turma']
 
-                # Contexto Word
+                # Contexto Word (Mapeamento EXATO para suas tags)
                 ctx_doc = {
                     # 1. DADOS DO ALUNO
                     'nome': get_safe(aluno, 'nome_completo').upper(),
@@ -282,11 +285,17 @@ def main():
                     'uf': get_safe(aluno, 'uf'),
                     'cep': get_safe(aluno, 'cep'),
 
-                    # 2. DADOS DO PRODUTO
+                    # 2. DADOS DO PRODUTO (Corrigido para seu modelo)
                     'curso': get_safe(curso, 'nome'),
                     'pos_graduacao': get_safe(curso, 'nome'),
+                    
+                    # Correção: codigo_turma (conforme sua tabela)
                     'codigo_turma': get_safe(dados_turma, 'codigo_turma'), 
+                    
+                    # Correção: formato (conforme sua tabela) para a tag formato_curso
                     'formato_curso': get_safe(dados_turma, 'formato', 'EAD'),
+                    
+                    # Correção: atendimento (com padrão 'Sim' ou 'Não')
                     'atendimento': get_safe(dados_turma, 'atendimento', 'Sim'), 
 
                     # 3. FINANCEIRO
@@ -309,7 +318,6 @@ def main():
                 docx_buffer = processor.generate_docx(ctx_doc, tab_ent, tab_sal)
                 pdf_buffer = PDFManager.convert_docx_to_pdf(docx_buffer)
                 
-                # Cache do PDF
                 st.session_state.pdf_buffer_cache = pdf_buffer
 
                 path_s, _ = StorageService.upload_minuta(pdf_buffer, aluno['nome_completo'], curso['nome'])
