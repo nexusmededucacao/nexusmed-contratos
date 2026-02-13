@@ -29,25 +29,6 @@ if not st.session_state.get("authenticated"):
     st.error("Por favor, faça login para acessar esta página.")
     st.stop()
 
-# --- CALLBACK PARA RECÁLCULO DA ENTRADA ---
-def recalcular_parcelas_entrada():
-    total = st.session_state.get('v_entrada_total_safe', 0.0)
-    qtd = st.session_state.get('q_entrada_safe', 1)
-    soma_acumulada = 0.0
-    for i in range(qtd):
-        key = f"input_ent_{i}"
-        if key in st.session_state:
-            val_atual = st.session_state[key]
-            soma_acumulada += val_atual
-            saldo_restante = total - soma_acumulada
-            parcelas_restantes = qtd - (i + 1)
-            if parcelas_restantes > 0:
-                valor_prox = round(saldo_restante / parcelas_restantes, 2)
-                for j in range(i + 1, qtd):
-                    key_prox = f"input_ent_{j}"
-                    st.session_state[key_prox] = max(0.0, round(total - (soma_acumulada + (valor_prox * (parcelas_restantes - 1))), 2) if j == qtd - 1 else valor_prox)
-                break
-
 def main():
     st.title("📄 Gerador de Contratos")
     
@@ -55,7 +36,7 @@ def main():
     if "form_data" not in st.session_state: st.session_state.form_data = {}
     if "url_pdf_oficial" not in st.session_state: st.session_state.url_pdf_oficial = None
 
-    # --- PASSO 1 E 2: SELEÇÃO (Mesma lógica anterior) ---
+    # --- PASSO 1: SELECIONAR ALUNO ---
     if st.session_state.step == 1:
         st.subheader("Etapa 1: Selecionar Aluno")
         busca = st.text_input("Buscar Aluno por Nome ou CPF")
@@ -71,6 +52,7 @@ def main():
                             st.session_state.step = 2
                             st.rerun()
 
+    # --- PASSO 2: CURSO E TURMA ---
     elif st.session_state.step == 2:
         st.subheader("Etapa 2: Curso e Turma")
         aluno = st.session_state.form_data.get('aluno', {})
@@ -89,7 +71,7 @@ def main():
                     st.session_state.step = 3
                     st.rerun()
 
-    # --- PASSO 3: FINANCEIRO E "O PULO DO GATO" ---
+    # --- PASSO 3: FINANCEIRO E GERAÇÃO ---
     elif st.session_state.step == 3:
         st.subheader("Etapa 3: Financeiro")
         aluno = st.session_state.form_data['aluno']
@@ -97,13 +79,10 @@ def main():
         dados_turma = st.session_state.form_data['turma']
         
         valor_bruto = float(curso.get('valor_bruto', 0))
-        valor_material_calc = round(valor_bruto * 0.30, 2)
-        
         percent_desc = st.number_input("Desconto Comercial (%)", 0.0, 100.0, 0.0, step=0.5)
         valor_final = round(valor_bruto - round(valor_bruto * (percent_desc / 100), 2), 2)
         st.success(f"### Valor Final: {format_currency(valor_final)}")
 
-        # Lógica simplificada de parcelas para o teste
         v_entrada_total = st.number_input("Total Entrada", 0.0, valor_final, 0.0, key="v_entrada_total_safe")
         q_entrada = st.selectbox("Parcelas Entrada", [1, 2, 3], key="q_entrada_safe")
         saldo_restante = round(valor_final - v_entrada_total, 2)
@@ -115,41 +94,37 @@ def main():
                     token = str(uuid.uuid4())
                     agora = datetime.now()
                     
-                    # 1. GERAÇÃO DO CONTEXTO E DOCUMENTO
-                    def get_safe(source, key, default=""): return str(source.get(key)) if source.get(key) is not None else default
-                    
+                    # 1. GERAÇÃO DO CONTEXTO (Garantindo dados preenchidos)
                     ctx_doc = {
-                        'nome': get_safe(aluno, 'nome_completo').upper(),
-                        'cpf': format_cpf(get_safe(aluno, 'cpf')),
+                        'nome': str(aluno.get('nome_completo', '')).upper(),
+                        'cpf': format_cpf(str(aluno.get('cpf', ''))),
                         'data_nascimento': format_date_br(aluno.get('data_nascimento')),
-                        'estado_civil': get_safe(aluno, 'estado_civil', 'Solteiro(a)'),
-                        'curso': get_safe(curso, 'nome'),
-                        'turma': get_safe(dados_turma, 'codigo_turma'),
+                        'estado_civil': str(aluno.get('estado_civil', 'Solteiro(a)')),
+                        'curso': str(curso.get('nome', '')),
+                        'turma': str(dados_turma.get('codigo_turma', '')),
                         'valor_final': format_currency(valor_final).replace("R$", "").strip(),
                         'dia': agora.day, 'mês': obter_mes_extenso(agora), 'ano': agora.year
                     }
 
                     processor = ContractProcessor("assets/modelo_contrato_V2.docx")
-                    docx_buffer = processor.generate_docx(ctx_doc, [], []) # Tabelas vazias para o teste rápido
+                    docx_buffer = processor.generate_docx(ctx_doc, [], []) 
                     pdf_buffer = PDFManager.convert_docx_to_pdf(docx_buffer)
                     
-                    # 2. UPLOAD PARA O BUCKET (Congelamento do arquivo)
+                    # 2. UPLOAD E CONGELAMENTO
                     url_pdf_servidor, erro_upload = StorageService.upload_minuta(pdf_buffer, aluno['nome_completo'], curso['nome'])
-                    
                     if erro_upload: raise Exception(f"Erro no Upload: {erro_upload}")
 
-                    # 3. SALVAMENTO NO BANCO COM O LINK DA NUVEM
+                    # 3. SALVAMENTO NO BANCO
                     dados_db = {
                         "aluno_id": aluno['id'], "turma_id": int(dados_turma['id']),
                         "valor_final": valor_final, "token_acesso": token, "status": "Pendente",
-                        "caminho_arquivo": url_pdf_servidor, # Fonte Única da Verdade
+                        "caminho_arquivo": url_pdf_servidor,
                         "entrada_valor": v_entrada_total, "saldo_valor": saldo_restante
                     }
                     
                     res = ContratoRepository.criar_contrato(dados_db)
                     if res and isinstance(res, dict) and 'error' in res: raise Exception(res['error'])
 
-                    # Transição para o sucesso
                     st.session_state.url_pdf_oficial = url_pdf_servidor
                     st.session_state.ultimo_token = token
                     st.session_state.step = 4
@@ -162,23 +137,37 @@ def main():
     elif st.session_state.step == 4:
         st.success("✅ Arquivo Oficial Gerado e Sincronizado!")
         url_oficial = st.session_state.get('url_pdf_oficial')
-        link_assinatura = f"{BASE_URL}/Assinatura?token={st.session_state.ultimo_token}"
+        token = st.session_state.ultimo_token
+        aluno = st.session_state.form_data['aluno']
+        curso = st.session_state.form_data['curso']
+        
+        # Link que será enviado por e-mail e exibido na tela
+        link_assinatura = f"{BASE_URL}/Assinatura?token={token}"
 
         with st.container(border=True):
             st.markdown("### 📢 Ações de Auditoria")
             st.info("Baixe o arquivo abaixo para conferir se está idêntico ao que o aluno acessará.")
             
             c1, c2 = st.columns(2)
-                       
+            
             if url_oficial:
                 c1.link_button("📥 Baixar PDF do Servidor", url_oficial, use_container_width=True)
             
             if c2.button("📧 Enviar Convite por E-mail", type="primary", use_container_width=True):
                 with st.spinner("Enviando..."):
                     try:
-                        enviar_email_contrato(st.session_state.form_data['aluno']['email'], st.session_state.form_data['aluno']['nome_completo'], link_assinatura, st.session_state.form_data['curso']['nome'])
-                        st.toast("E-mail disparado!", icon="✅")
-                    except Exception as e: st.error(f"Erro no e-mail: {e}")
+                        # Ajuste na chamada para bater com a função do email_sender.py
+                        sucesso = enviar_email_contrato(
+                            aluno['email'], 
+                            aluno['nome_completo'], 
+                            link_assinatura, 
+                            curso['nome']
+                        )
+                        if sucesso:
+                            st.toast("E-mail disparado!", icon="✅")
+                            st.success(f"Convite enviado para: {aluno['email']}")
+                    except Exception as e: 
+                        st.error(f"Erro no e-mail: {e}")
 
             st.divider()
             st.code(link_assinatura, language="text")
