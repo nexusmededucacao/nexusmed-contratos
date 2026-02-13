@@ -3,48 +3,28 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import streamlit as st
 
-def obter_url_app():
-    """
-    Detecta a URL base do aplicativo para gerar links de assinatura.
-    """
-    try:
-        # 1. Prioridade: Configuração manual no secrets.toml
-        if "app" in st.secrets and "base_url" in st.secrets["app"]:
-            return st.secrets["app"]["base_url"].rstrip('/')
-    except: pass
-    
-    try:
-        # 2. Detecção automática via headers do Streamlit (Cloud/Linux)
-        if hasattr(st, 'context') and hasattr(st.context, 'headers'):
-            host = st.context.headers.get('Host', '')
-            if host: return f"https://{host}"
-    except: pass
-    
-    # 3. Fallback para desenvolvimento local
-    return "http://localhost:8501"
+# Função obter_url_app removida pois o link já virá pronto
 
-def enviar_email_contrato(email_destinatario: str, nome_aluno: str, nome_curso: str, token: str):
+def enviar_email_contrato(email_destinatario: str, nome_aluno: str, link_assinatura: str, nome_curso: str):
     """
     Envia o link de assinatura para o aluno via SMTP.
+    Args:
+        link_assinatura: URL completa já montada (ex: https://.../Assinatura?token=xyz)
     """
     try:
-        # 1. Monta o Link usando a página oculta 'Assinatura'
-        base_url = obter_url_app()
-        link_completo = f"{base_url}/Assinatura?token={token}"
-
-        # 2. Configurações SMTP do secrets.toml
+        # 1. Configurações SMTP do secrets.toml
         smtp_host = st.secrets["email"]["smtp_host"]
-        smtp_port = int(st.secrets["email"]["smtp_port"]) # Garante inteiro
+        smtp_port = int(st.secrets["email"]["smtp_port"]) 
         smtp_user = st.secrets["email"]["smtp_user"]
         smtp_pass = st.secrets["email"]["smtp_password"]
 
-        # 3. Cria a Mensagem Multipart
+        # 2. Cria a Mensagem Multipart
         msg = MIMEMultipart('alternative')
         msg['Subject'] = f"Assinatura Pendente: Contrato {nome_curso}"
         msg['From'] = f"NexusMed Secretaria <{smtp_user}>"
         msg['To'] = email_destinatario
 
-        # 4. Template HTML estilizado
+        # 3. Template HTML estilizado (Usa o link_assinatura direto)
         html_body = f"""
         <html>
         <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
@@ -59,12 +39,13 @@ def enviar_email_contrato(email_destinatario: str, nome_aluno: str, nome_curso: 
                     <div style="background-color: #f8fafc; padding: 20px; border-radius: 8px; margin: 25px 0; text-align: center; border: 1px solid #e2e8f0;">
                         <p style="margin-bottom: 15px; font-size: 14px; color: #64748b;">Clique abaixo para revisar os dados e assinar:</p>
                         
-                        <a href="{link_completo}" style="background-color: #2563eb; color: white; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+                        <a href="{link_assinatura}" style="background-color: #2563eb; color: white; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
                             ✍️ REVISAR E ASSINAR AGORA
                         </a>
                     </div>
                     
-                    <p style="font-size: 11px; color: #94a3b8;">Caso o botão não funcione, utilize o link: <br> {link_completo}</p>
+                    <p style="font-size: 11px; color: #94a3b8;">Caso o botão não funcione, utilize o link: <br> 
+                    <a href="{link_assinatura}">{link_assinatura}</a></p>
                 </div>
                 <div style="background-color: #f1f5f9; padding: 15px; text-align: center; font-size: 12px; color: #64748b;">
                     <p>Este é um e-mail automático. Por favor, não responda.</p>
@@ -77,14 +58,15 @@ def enviar_email_contrato(email_destinatario: str, nome_aluno: str, nome_curso: 
         part = MIMEText(html_body, 'html', 'utf-8')
         msg.attach(part)
 
-        # 5. Conexão e Envio
+        # 4. Conexão e Envio
         with smtplib.SMTP(smtp_host, smtp_port) as server:
-            server.set_debuglevel(0)
-            server.starttls() # Criptografia TLS
+            # server.set_debuglevel(1) # Descomente para debug se necessário
+            server.starttls() 
             server.login(smtp_user, smtp_pass)
             server.send_message(msg)
 
-        return {"success": True, "message": "Link de assinatura enviado com sucesso!"}
+        return True # Retorna booleano simples para o if sucesso: do app
 
     except Exception as e:
-        return {"success": False, "message": f"Erro ao enviar e-mail: {str(e)}"}
+        print(f"Erro SMTP: {e}")
+        return False
