@@ -78,14 +78,21 @@ def main():
         curso = st.session_state.form_data['curso']
         dados_turma = st.session_state.form_data['turma']
         
+        # Cálculos de base
         valor_bruto = float(curso.get('valor_bruto', 0))
+        valor_material_calc = round(valor_bruto * 0.30, 2)
+        
         percent_desc = st.number_input("Desconto Comercial (%)", 0.0, 100.0, 0.0, step=0.5)
-        valor_final = round(valor_bruto - round(valor_bruto * (percent_desc / 100), 2), 2)
-        st.success(f"### Valor Final: {format_currency(valor_final)}")
+        
+        # Variáveis definidas explicitamente para evitar erro de 'not defined'
+        v_desconto = round(valor_bruto * (percent_desc / 100), 2)
+        v_final = round(valor_bruto - v_desconto, 2)
+        
+        st.success(f"### Valor Final: {format_currency(v_final)}")
 
-        v_entrada_total = st.number_input("Total Entrada", 0.0, valor_final, 0.0, key="v_entrada_total_safe")
+        v_entrada_total = st.number_input("Total Entrada", 0.0, v_final, 0.0, key="v_entrada_total_safe")
         q_entrada = st.selectbox("Parcelas Entrada", [1, 2, 3], key="q_entrada_safe")
-        saldo_restante = round(valor_final - v_entrada_total, 2)
+        saldo_restante = round(v_final - v_entrada_total, 2)
         q_saldo = st.number_input("Parcelas Saldo", 1, 36, 12)
 
         if st.button("🚀 Gerar e Sincronizar com Servidor", type="primary", use_container_width=True):
@@ -94,7 +101,7 @@ def main():
                     token = str(uuid.uuid4())
                     agora = datetime.now()
                     
-                    # 1. GERAÇÃO DO CONTEXTO (Garantindo dados preenchidos)
+                    # 1. GERAÇÃO DO CONTEXTO
                     ctx_doc = {
                         'nome': str(aluno.get('nome_completo', '')).upper(),
                         'cpf': format_cpf(str(aluno.get('cpf', ''))),
@@ -102,7 +109,7 @@ def main():
                         'estado_civil': str(aluno.get('estado_civil', 'Solteiro(a)')),
                         'curso': str(curso.get('nome', '')),
                         'turma': str(dados_turma.get('codigo_turma', '')),
-                        'valor_final': format_currency(valor_final).replace("R$", "").strip(),
+                        'valor_final': format_currency(v_final).replace("R$", "").strip(),
                         'dia': agora.day, 'mês': obter_mes_extenso(agora), 'ano': agora.year
                     }
 
@@ -114,14 +121,14 @@ def main():
                     url_pdf_servidor, erro_upload = StorageService.upload_minuta(pdf_buffer, aluno['nome_completo'], curso['nome'])
                     if erro_upload: raise Exception(f"Erro no Upload: {erro_upload}")
 
-                    # 3. SALVAMENTO NO BANCO COM MAPEAMENTO COMPLETO
+                    # 3. SALVAMENTO NO BANCO COM MAPEAMENTO COMPLETO (Corrigido para bater com suas colunas)
                     dados_db = {
                         "aluno_id": aluno['id'],
-                        "turma_id": int(dados_turma['id']), # Cast para bigint
+                        "turma_id": int(dados_turma['id']),
                         "valor_curso": float(valor_bruto),
-                        "valor_desconto": float(valor_desconto),
+                        "valor_desconto": float(v_desconto),
                         "percentual_desconto": float(percent_desc),
-                        "valor_final": float(valor_final),
+                        "valor_final": float(v_final),
                         "valor_material": float(valor_material_calc),
                         "bolsista": True if percent_desc > 0 else False,
                         "atendimento_paciente": True if dados_turma.get('atendimento') == 'Sim' else False,
@@ -131,10 +138,9 @@ def main():
                         "saldo_qtd_parcelas": int(q_saldo),
                         "token_acesso": token,
                         "status": "Pendente",
-                        "caminho_arquivo": url_pdf_servidor, # URL do Bucket
+                        "caminho_arquivo": url_pdf_servidor,
                         "formato_curso": dados_turma.get('formato', 'Digital'),
-                        "entrada_forma_pagamento": lista_entrada[0]['forma'] if lista_entrada else "N/A",
-                        "saldo_forma_pagamento": f_saldo if 'f_saldo' in locals() else "N/A"
+                        "created_at": agora.isoformat()
                     }
                     
                     res = ContratoRepository.criar_contrato(dados_db)
@@ -156,7 +162,6 @@ def main():
         aluno = st.session_state.form_data['aluno']
         curso = st.session_state.form_data['curso']
         
-        # Link que será enviado por e-mail e exibido na tela
         link_assinatura = f"{BASE_URL}/Assinatura?token={token}"
 
         with st.container(border=True):
@@ -171,7 +176,6 @@ def main():
             if c2.button("📧 Enviar Convite por E-mail", type="primary", use_container_width=True):
                 with st.spinner("Enviando..."):
                     try:
-                        # Ajuste na chamada para bater com a função do email_sender.py
                         sucesso = enviar_email_contrato(
                             aluno['email'], 
                             aluno['nome_completo'], 
