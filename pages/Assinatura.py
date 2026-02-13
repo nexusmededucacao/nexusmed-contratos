@@ -73,9 +73,9 @@ def main():
     if url_original:
         # ÁREA DE DOWNLOAD (PRÉ-ASSINATURA)
         with st.container(border=True):
-            st.warning("⚠️ Passo Obrigatório: Leia o documento antes de concordar.")
+            st.warning("⚠️ FAÇA O DOWNLOAD E LEIA O CONTRATO ANTES DE ASSINAR! ⚠️.")
             st.link_button(
-                "📄 FAÇA O DOWNLOAD E LEIA SEU CONTRATO ANTES DE ASSINAR", 
+                "📄 DOWNLOAD 📄", 
                 url_original, 
                 type="primary", 
                 use_container_width=True
