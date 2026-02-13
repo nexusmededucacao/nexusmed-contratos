@@ -13,7 +13,7 @@ from src.document_engine.pdf_converter import PDFManager
 from src.utils.storage import StorageService
 from src.utils.email_sender import enviar_email_contrato
 
-# URL de Produção para os links de assinatura
+# URL de Produção
 BASE_URL = "https://nexusmed-contratos.streamlit.app" 
 
 def obter_mes_extenso(dt):
@@ -78,13 +78,13 @@ def main():
         curso = st.session_state.form_data['curso']
         dados_turma = st.session_state.form_data['turma']
         
-        # Cálculos de base
+        # Cálculos Iniciais
         valor_bruto = float(curso.get('valor_bruto', 0))
         valor_material_calc = round(valor_bruto * 0.30, 2)
         
         percent_desc = st.number_input("Desconto Comercial (%)", 0.0, 100.0, 0.0, step=0.5)
         
-        # Variáveis definidas explicitamente para evitar erro de 'not defined'
+        # Variáveis calculadas explicitamente
         v_desconto = round(valor_bruto * (percent_desc / 100), 2)
         v_final = round(valor_bruto - v_desconto, 2)
         
@@ -101,27 +101,83 @@ def main():
                     token = str(uuid.uuid4())
                     agora = datetime.now()
                     
-                    # 1. GERAÇÃO DO CONTEXTO
+                    # --- 1. PREPARAÇÃO DE DADOS (Helper) ---
+                    def fmt(valor, padrao=""):
+                        return str(valor) if valor is not None and str(valor).strip() != "" else padrao
+
+                    # --- 2. GERAÇÃO DAS TABELAS (O que faltava antes) ---
+                    tbl_entrada = []
+                    if v_entrada_total > 0:
+                        v_parc_ent = round(v_entrada_total / q_entrada, 2)
+                        for i in range(q_entrada):
+                            tbl_entrada.append({
+                                "n": str(i+1),
+                                "vencimento": date.today().strftime("%d/%m/%Y"), # Pode ajustar data se necessário
+                                "valor": format_currency(v_parc_ent),
+                                "forma": "A definir"
+                            })
+                    
+                    tbl_saldo = []
+                    if saldo_restante > 0:
+                        v_parc_saldo = round(saldo_restante / q_saldo, 2)
+                        dt_base = date.today() + relativedelta(months=1)
+                        for i in range(q_saldo):
+                            venc = dt_base + relativedelta(months=i)
+                            tbl_saldo.append({
+                                "n": f"{i+1}/{q_saldo}",
+                                "vencimento": venc.strftime("%d/%m/%Y"),
+                                "valor": format_currency(v_parc_saldo),
+                                "forma": "Boleto"
+                            })
+
+                    # --- 3. CONTEXTO COMPLETO DO DOCUMENTO ---
                     ctx_doc = {
-                        'nome': str(aluno.get('nome_completo', '')).upper(),
-                        'cpf': format_cpf(str(aluno.get('cpf', ''))),
+                        'nome': fmt(aluno.get('nome_completo')).upper(),
+                        'cpf': format_cpf(fmt(aluno.get('cpf'))),
+                        'rg': fmt(aluno.get('rg'), "___________"),
                         'data_nascimento': format_date_br(aluno.get('data_nascimento')),
-                        'estado_civil': str(aluno.get('estado_civil', 'Solteiro(a)')),
-                        'curso': str(curso.get('nome', '')),
-                        'turma': str(dados_turma.get('codigo_turma', '')),
+                        'estado_civil': fmt(aluno.get('estado_civil'), "Solteiro(a)"),
+                        'nacionalidade': fmt(aluno.get('nacionalidade'), "Brasileira"),
+                        'email': fmt(aluno.get('email')),
+                        'telefone': fmt(aluno.get('telefone')),
+                        'endereco': fmt(aluno.get('logradouro')),
+                        'numero': fmt(aluno.get('numero')),
+                        'bairro': fmt(aluno.get('bairro')),
+                        'cidade': fmt(aluno.get('cidade')),
+                        'estado': fmt(aluno.get('uf')),
+                        'cep': fmt(aluno.get('cep')),
+                        'crm': fmt(aluno.get('crm'), "___________"),
+                        
+                        # Dados do Curso e Turma
+                        'curso': fmt(curso.get('nome')),
+                        'turma': fmt(dados_turma.get('codigo_turma')),
+                        'formato': fmt(dados_turma.get('formato'), "Digital"),
+                        
+                        # Financeiro (Strings formatadas)
+                        'valor_bruto': format_currency(valor_bruto).replace("R$", "").strip(),
+                        'percentual_desconto': str(percent_desc).replace(".", ","),
+                        'valor_desconto': format_currency(v_desconto).replace("R$", "").strip(),
                         'valor_final': format_currency(v_final).replace("R$", "").strip(),
-                        'dia': agora.day, 'mês': obter_mes_extenso(agora), 'ano': agora.year
+                        'valor_material': format_currency(valor_material_calc).replace("R$", "").strip(),
+                        'bolsista': "SIM" if percent_desc > 0 else "NÃO",
+                        
+                        # Datas
+                        'dia': str(agora.day), 
+                        'mês': obter_mes_extenso(agora).lower(), 
+                        'ano': str(agora.year)
                     }
 
+                    # --- 4. GERAÇÃO FÍSICA DO ARQUIVO ---
                     processor = ContractProcessor("assets/modelo_contrato_V2.docx")
-                    docx_buffer = processor.generate_docx(ctx_doc, [], []) 
+                    # AGORA PASSAMOS AS TABELAS tbl_entrada e tbl_saldo
+                    docx_buffer = processor.generate_docx(ctx_doc, tbl_entrada, tbl_saldo) 
                     pdf_buffer = PDFManager.convert_docx_to_pdf(docx_buffer)
                     
-                    # 2. UPLOAD E CONGELAMENTO
+                    # --- 5. UPLOAD ---
                     url_pdf_servidor, erro_upload = StorageService.upload_minuta(pdf_buffer, aluno['nome_completo'], curso['nome'])
                     if erro_upload: raise Exception(f"Erro no Upload: {erro_upload}")
 
-                    # 3. SALVAMENTO NO BANCO COM MAPEAMENTO COMPLETO (Corrigido para bater com suas colunas)
+                    # --- 6. SALVAMENTO NO BANCO ---
                     dados_db = {
                         "aluno_id": aluno['id'],
                         "turma_id": int(dados_turma['id']),
