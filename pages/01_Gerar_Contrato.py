@@ -31,7 +31,6 @@ def recalcular_parcelas_entrada():
     """
     Recalcula as parcelas seguintes da entrada quando o usuário edita uma anterior.
     """
-    # Usamos session_state para pegar os valores mais recentes
     total = st.session_state.get('v_entrada_total_safe', 0.0)
     qtd = st.session_state.get('q_entrada_safe', 1)
     
@@ -40,34 +39,25 @@ def recalcular_parcelas_entrada():
     for i in range(qtd):
         key = f"input_ent_{i}"
         
-        # Se a chave existe (o widget já foi criado/editado)
-        if key in st.session_state:
-            val_atual = st.session_state[key]
-            soma_acumulada += val_atual
+        # Recupera valor atual
+        val_atual = st.session_state.get(key, 0.0)
+        soma_acumulada += val_atual
+        
+        saldo_restante = total - soma_acumulada
+        parcelas_restantes = qtd - (i + 1)
+        
+        if parcelas_restantes > 0:
+            valor_prox = round(saldo_restante / parcelas_restantes, 2)
             
-            # Quanto falta para completar a entrada?
-            saldo_restante = total - soma_acumulada
-            parcelas_restantes = qtd - (i + 1)
-            
-            # Se ainda tem parcelas para frente, distribui o saldo
-            if parcelas_restantes > 0:
-                # Divide o que sobrou igualmente
-                valor_prox = round(saldo_restante / parcelas_restantes, 2)
+            for j in range(i + 1, qtd):
+                key_prox = f"input_ent_{j}"
                 
-                # Aplica nos inputs seguintes
-                for j in range(i + 1, qtd):
-                    key_prox = f"input_ent_{j}"
-                    
-                    # A última parcela pega a diferença exata (ajuste de centavos)
-                    if j == qtd - 1:
-                        # (Total - (tudo que já foi somado + parcelas intermediárias))
-                        val_prox_final = round(total - (soma_acumulada + (valor_prox * (parcelas_restantes - 1))), 2)
-                        st.session_state[key_prox] = max(0.0, val_prox_final)
-                    else:
-                        st.session_state[key_prox] = max(0.0, valor_prox)
-                
-                # Interrompe o loop pois já recalculamos o futuro com base na edição atual
-                break
+                if j == qtd - 1:
+                    val_prox_final = round(total - (soma_acumulada + (valor_prox * (parcelas_restantes - 1))), 2)
+                    st.session_state[key_prox] = max(0.0, val_prox_final)
+                else:
+                    st.session_state[key_prox] = max(0.0, valor_prox)
+            break
 
 def main():
     st.title("📄 Gerador de Contratos")
@@ -106,6 +96,7 @@ def main():
             curso_dados = map_cursos[sel_curso]
             turmas = curso_dados.get('turmas', [])
             if turmas:
+                # O dicionário 't' contém todos os dados da linha da tabela 'turmas'
                 map_turmas = {f"{t['codigo_turma']} ({t.get('formato','-')})": t for t in turmas}
                 sel_turma = st.selectbox("Selecione a Turma", list(map_turmas.keys()))
                 if st.button("Avançar"):
@@ -140,14 +131,13 @@ def main():
         st.success(f"### Valor Final do Contrato: {format_currency(valor_final)}")
         st.divider()
 
-        # 1. ENTRADA (CORREÇÃO DO TRAVAMENTO)
+        # 1. ENTRADA
         st.markdown("#### 1. Pagamento de Entrada / À Vista")
         ce1, ce2 = st.columns(2)
         
         v_entrada_total = ce1.number_input("Valor Total da Entrada", 0.0, valor_final, 0.0, step=100.0, key="v_entrada_total_safe")
         q_entrada = ce2.selectbox("Qtd. Parcelas Entrada", [1, 2, 3], key="q_entrada_safe")
         
-        # Inicializa valores da entrada (reset inteligente)
         if "last_v_entrada" not in st.session_state or st.session_state.last_v_entrada != v_entrada_total or st.session_state.last_q_entrada != q_entrada:
             st.session_state.last_v_entrada = v_entrada_total
             st.session_state.last_q_entrada = q_entrada
@@ -155,7 +145,6 @@ def main():
             v_base = round(v_entrada_total / q_entrada, 2) if q_entrada > 0 else 0
             for k in range(q_entrada):
                 key_p = f"input_ent_{k}"
-                # Ajuste de centavos na última parcela
                 if k == q_entrada - 1:
                     v_final_p = round(v_entrada_total - (v_base * (q_entrada - 1)), 2)
                     st.session_state[key_p] = max(0.0, v_final_p)
@@ -171,9 +160,7 @@ def main():
                     c_e1, c_e2, c_e3 = st.columns(3)
                     key_val = f"input_ent_{i}"
                     
-                    # --- CORREÇÃO DO CRASH ---
-                    # Antes de criar o widget, garantimos que o valor no session_state não ultrapasse o contrato.
-                    # Mas no widget, usamos max_value = valor_final (bem alto) para não travar a UI durante a digitação.
+                    # Sanitização de estado
                     if key_val in st.session_state:
                          if st.session_state[key_val] > valor_final:
                              st.session_state[key_val] = valor_final
@@ -181,7 +168,7 @@ def main():
                     v_p = c_e1.number_input(
                         f"Valor P{i+1}", 
                         min_value=0.0, 
-                        max_value=float(valor_final), # EVITA O CRASH: O limite é o contrato todo
+                        max_value=float(valor_final), 
                         step=0.01,
                         key=key_val,
                         on_change=recalcular_parcelas_entrada
@@ -192,7 +179,6 @@ def main():
                     
                     lista_entrada.append({"numero": i+1, "data": d_p.strftime("%d/%m/%Y"), "valor": format_currency(v_p), "forma": f_p, "valor_num": v_p})
 
-            # Validação visual de soma
             soma_entrada = sum(p['valor_num'] for p in lista_entrada)
             if round(soma_entrada, 2) != round(v_entrada_total, 2):
                 st.warning(f"⚠️ Atenção: A soma das parcelas ({format_currency(soma_entrada)}) difere do total da entrada.")
@@ -240,7 +226,7 @@ def main():
                 token = str(uuid.uuid4())
                 agora = datetime.now()
                 
-                # --- FUNÇÕES AUXILIARES DE DADOS ---
+                # --- FUNÇÕES AUXILIARES ---
                 def get_safe(source, key, default=""):
                     val = source.get(key)
                     return str(val) if val is not None else default
@@ -248,7 +234,6 @@ def main():
                 def format_money_word(valor):
                     return format_currency(valor).replace("R$", "").strip()
 
-                # Tratamento Data Nascimento
                 d_nasc = aluno.get('data_nascimento', '')
                 try:
                     if isinstance(d_nasc, str) and d_nasc: 
@@ -258,12 +243,15 @@ def main():
                     else: d_nasc_fmt = ""
                 except: d_nasc_fmt = str(d_nasc)
 
-                # --- DEFINIÇÃO OBRIGATÓRIA DA TURMA ---
+                # --- DADOS DA TURMA ---
                 dados_turma = st.session_state.form_data['turma']
+                
+                # Extraímos o código da turma para uma variável para reusar
+                codigo_turma_valor = get_safe(dados_turma, 'codigo_turma')
 
-                # Contexto Word (Mapeamento EXATO para suas tags)
+                # --- CONTEXTO WORD (DUPLA VERIFICAÇÃO DE TAGS) ---
                 ctx_doc = {
-                    # 1. DADOS DO ALUNO
+                    # 1. ALUNO
                     'nome': get_safe(aluno, 'nome_completo').upper(),
                     'cpf': format_cpf(get_safe(aluno, 'cpf')),
                     'rg': get_safe(aluno, 'rg'),
@@ -285,17 +273,16 @@ def main():
                     'uf': get_safe(aluno, 'uf'),
                     'cep': get_safe(aluno, 'cep'),
 
-                    # 2. DADOS DO PRODUTO (Corrigido para seu modelo)
+                    # 2. PRODUTO (REDUNDÂNCIA PARA GARANTIR PREENCHIMENTO)
                     'curso': get_safe(curso, 'nome'),
                     'pos_graduacao': get_safe(curso, 'nome'),
                     
-                    # Correção: codigo_turma (conforme sua tabela)
-                    'codigo_turma': get_safe(dados_turma, 'codigo_turma'), 
+                    # Envia para a chave 'codigo_turma' (se o Word usar {{codigo_turma}})
+                    'codigo_turma': codigo_turma_valor,
+                    # Envia TAMBÉM para a chave 'turma' (se o Word usar {{turma}})
+                    'turma': codigo_turma_valor,
                     
-                    # Correção: formato (conforme sua tabela) para a tag formato_curso
                     'formato_curso': get_safe(dados_turma, 'formato', 'EAD'),
-                    
-                    # Correção: atendimento (com padrão 'Sim' ou 'Não')
                     'atendimento': get_safe(dados_turma, 'atendimento', 'Sim'), 
 
                     # 3. FINANCEIRO
@@ -307,7 +294,9 @@ def main():
                     'bolsista': "SIM" if percent_desc > 0 else "NÃO",
                     
                     # 4. DATAS
-                    'dia': agora.day, 'mês': obter_mes_extenso(agora), 'ano': agora.year,
+                    'dia': agora.day, 
+                    'mês': obter_mes_extenso(agora), 
+                    'ano': agora.year,
                     'data_atual': format_date_br(agora)
                 }
 
