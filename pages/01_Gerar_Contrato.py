@@ -134,28 +134,29 @@ def main():
                     ctx_doc = {
                         'nome': fmt(aluno.get('nome_completo')).upper(),
                         'cpf': format_cpf(fmt(aluno.get('cpf'))),
-                        'rg': fmt(aluno.get('rg'), "___________"),
                         'data_nascimento': format_date_br(aluno.get('data_nascimento')),
                         'estado_civil': fmt(aluno.get('estado_civil'), "Solteiro(a)"),
                         'nacionalidade': fmt(aluno.get('nacionalidade'), "Brasileira"),
                         'email': fmt(aluno.get('email')),
                         'telefone': fmt(aluno.get('telefone')),
-                        'endereco': fmt(aluno.get('logradouro')),
+                        'logradouro': fmt(aluno.get('logradouro')),
                         'numero': fmt(aluno.get('numero')),
+                        'complemento': fmt(aluno.get('complemento')),
                         'bairro': fmt(aluno.get('bairro')),
                         'cidade': fmt(aluno.get('cidade')),
-                        'estado': fmt(aluno.get('uf')),
+                        'uf': fmt(aluno.get('uf')),
                         'cep': fmt(aluno.get('cep')),
                         'crm': fmt(aluno.get('crm'), "___________"),
+                        'area_formacao': fmt(aluno.get('area_formacao')),
                         
                         # Dados do Curso e Turma
-                        'curso': fmt(curso.get('nome')),
-                        'turma': fmt(dados_turma.get('codigo_turma')),
-                        'formato': fmt(dados_turma.get('formato'), "Digital"),
-                        
+                        'pos_graduacao': fmt(curso.get('nome')),
+                        'codigo_turma': fmt(dados_turma.get('codigo_turma')),
+                        'formato_curso': fmt(dados_turma.get('formato'), "Digital"),
+                                               
                         # Financeiro (Strings formatadas)
-                        'valor_bruto': format_currency(valor_bruto).replace("R$", "").strip(),
-                        'percentual_desconto': str(percent_desc).replace(".", ","),
+                        'valor_curso': format_currency(valor_bruto).replace("R$", "").strip(),
+                        'percentual_desconto': str(percentual_desc).replace(".", ","),
                         'valor_desconto': format_currency(v_desconto).replace("R$", "").strip(),
                         'valor_final': format_currency(v_final).replace("R$", "").strip(),
                         'valor_material': format_currency(valor_material_calc).replace("R$", "").strip(),
